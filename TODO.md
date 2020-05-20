@@ -1,6 +1,6 @@
 ## General
 - [ ] Save all data on SIGINT
-- [ ] Change all `os.Getenv` to `os.LookupEnv`
+- [x] Change all `os.Getenv` to `os.LookupEnv`
 - [ ] Implement graph
 - [X] Use logger object
 

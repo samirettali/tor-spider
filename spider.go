@@ -160,11 +160,12 @@ func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
 	extensions.RandomUserAgent(c)
 	extensions.Referer(c)
 
-	if os.Getenv("PROXY_URI") == "" {
+	proxyURI, ok := os.LookupEnv("PROXY_URI")
+	if !ok {
 		return nil, errors.New("You must set PROXY_URI env variable")
 	}
 
-	proxyURL, err := url.Parse(os.Getenv("PROXY_URI"))
+	proxyURL, err := url.Parse(proxyURI)
 	if err != nil {
 		return nil, err
 	}

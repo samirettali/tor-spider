@@ -25,8 +25,8 @@ type MongoJobsStorage struct {
 func (s *MongoJobsStorage) Init() error {
 	if s.collection == nil {
 		s.jobs = make(chan Job, 100)
-		mongoURI := os.Getenv("MONGO_URI")
-		if mongoURI == "" {
+		mongoURI, ok := os.LookupEnv("MONGO_URI")
+		if !ok {
 			return errors.New("You must define MONGO_URI env variable")
 		}
 		var client *mongo.Client

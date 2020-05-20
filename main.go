@@ -46,8 +46,8 @@ func main() {
 	}
 
 	// Setting up storage
-	redisURI := os.Getenv("REDIS_URI")
-	if redisURI == "" {
+	redisURI, ok := os.LookupEnv("REDIS_URI")
+	if !ok {
 		log.Fatal("You must set REDIS_URI env variable")
 	}
 
@@ -73,9 +73,17 @@ func main() {
 		Logger:     logger,
 	}
 
+	mongoDB, ok := os.LookupEnv("MONGO_DB")
+	if !ok {
+		logger.Error("You must set MONGO_DB env variable")
+	}
+	mongoCol, ok := os.LookupEnv("MONGO_COL")
+	if !ok {
+		logger.Error("You must set MONGO_COL env variable")
+	}
 	jobsStorage := &MongoJobsStorage{
-		DatabaseName:   os.Getenv("MONGO_DB"),
-		CollectionName: os.Getenv("MONGO_COL"),
+		DatabaseName:   mongoDB,
+		CollectionName: mongoCol,
 		Logger:         logger,
 	}
 
