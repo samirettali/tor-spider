@@ -65,8 +65,14 @@ func (spider *Spider) Init() {
 	// defer storage.Client.Close()
 
 	spider.startWebServer()
-	spider.startJobsStorage()
-	spider.pageStorage.Init()
+
+	if err := spider.startJobsStorage(); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := spider.pageStorage.Init(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func (spider *Spider) startWebServer() {
