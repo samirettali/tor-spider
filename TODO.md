@@ -7,8 +7,8 @@
 - [ ] Fix `msgChan` and `errChan` sizes in order to prevent deadlock
 
 ## Storage
-- [ ] Make `PageStorage` an interface
-- [ ] Refactor `ElasticPageStorage`
+- [x] Make `PageStorage` an interface
+- [x] Refactor `ElasticPageStorage`
 - [ ] Store responses headers
 - [ ] Save pages in case of error
 
