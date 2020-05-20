@@ -2,10 +2,10 @@
 - [ ] Save all data on SIGINT
 - [ ] Change all `os.Getenv` to `os.LookupEnv`
 - [ ] Implement graph
-- [ ] Use logger object
+- [X] Use logger object
 
 ## Concurrency
-- [ ] Fix `msgChan` and `errChan` sizes in order to prevent deadlock
+- [X] Fix `msgChan` and `errChan` sizes in order to prevent deadlock
 
 ## Storage
 - [x] Make `PageStorage` an interface
