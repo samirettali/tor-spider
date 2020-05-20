@@ -1,11 +1,9 @@
 package main
 
 import (
-	"errors"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strconv"
 	"time"
@@ -37,6 +35,7 @@ type Spider struct {
 	blacklist   []string
 	jobs        chan Job
 	results     chan PageInfo
+	proxyURI    string
 
 	storage     storage.Storage
 	jobsStorage JobsStorage
@@ -160,12 +159,7 @@ func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
 	extensions.RandomUserAgent(c)
 	extensions.Referer(c)
 
-	proxyURI, ok := os.LookupEnv("PROXY_URI")
-	if !ok {
-		return nil, errors.New("You must set PROXY_URI env variable")
-	}
-
-	proxyURL, err := url.Parse(proxyURI)
+	proxyURL, err := url.Parse(spider.proxyURI)
 	if err != nil {
 		return nil, err
 	}

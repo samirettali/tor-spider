@@ -50,6 +50,7 @@ services:
     environment:
       - REDIS_URI=${REDIS_URI}
       - ELASTIC_URI=${ELASTIC_URI}
+      - ELASTIC_INDEX=${ELASTIC_INDEX}
       - PROXY_URI=${PROXY_URI}
       - MONGO_URI=${MONGO_URI}
       - MONGO_DB=${MONGO_DB}

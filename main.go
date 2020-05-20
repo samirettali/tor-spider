@@ -73,6 +73,10 @@ func main() {
 		Logger:     logger,
 	}
 
+	mongoURI, ok := os.LookupEnv("MONGO_URI")
+	if !ok {
+		logger.Error("You must define MONGO_URI env variable")
+	}
 	mongoDB, ok := os.LookupEnv("MONGO_DB")
 	if !ok {
 		logger.Error("You must set MONGO_DB env variable")
@@ -82,16 +86,22 @@ func main() {
 		logger.Error("You must set MONGO_COL env variable")
 	}
 	jobsStorage := &MongoJobsStorage{
+		URI:            mongoURI,
 		DatabaseName:   mongoDB,
 		CollectionName: mongoCol,
 		Logger:         logger,
 	}
 
 	// Workers starter
+	proxyURI, ok := os.LookupEnv("PROXY_URI")
+	if !ok {
+		logger.Error("You must set PROXY_URI env variable")
+	}
 	spider := &Spider{
 		storage:     visitedStorage,
 		jobsStorage: jobsStorage,
 		pageStorage: pageStorage,
+		proxyURI:    proxyURI,
 		numWorkers:  *numWorkers,
 		parallelism: *parallelism,
 		depth:       *depth,

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"os"
 
 	log "github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
@@ -16,6 +15,7 @@ type MongoJobsStorage struct {
 	DatabaseName   string
 	CollectionName string
 	Logger         *log.Logger
+	URI            string
 
 	jobs       chan Job
 	collection *mongo.Collection
@@ -25,13 +25,9 @@ type MongoJobsStorage struct {
 func (s *MongoJobsStorage) Init() error {
 	if s.collection == nil {
 		s.jobs = make(chan Job, 100)
-		mongoURI, ok := os.LookupEnv("MONGO_URI")
-		if !ok {
-			return errors.New("You must define MONGO_URI env variable")
-		}
 		var client *mongo.Client
 		var err error
-		if client, err = mongo.NewClient(options.Client().ApplyURI(mongoURI)); err != nil {
+		if client, err = mongo.NewClient(options.Client().ApplyURI(s.URI)); err != nil {
 			return err
 		}
 		if err = client.Connect(context.Background()); err != nil {
