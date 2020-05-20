@@ -9,6 +9,7 @@
 ## Storage
 - [x] Make `PageStorage` an interface
 - [x] Refactor `ElasticPageStorage`
+- [ ] Make `ElasticPageStorage` concurrent
 - [ ] Store responses headers
 - [ ] Save pages in case of error
 
