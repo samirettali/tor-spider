@@ -2,6 +2,7 @@
 - [ ] Save all data on SIGINT
 - [ ] Change all `os.Getenv` to `os.LookupEnv`
 - [ ] Implement graph
+- [ ] Use logger object
 
 ## Concurrency
 - [ ] Fix `msgChan` and `errChan` sizes in order to prevent deadlock
