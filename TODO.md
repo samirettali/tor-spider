@@ -9,6 +9,7 @@
 - [ ] Make `PageStorage` an interface
 - [ ] Refactor `ElasticPageStorage`
 - [ ] Store responses headers
+- [ ] Save pages in case of error
 
 ## Collectors
 - [ ] Make another collector for URLs added from the webserver, in order to be
