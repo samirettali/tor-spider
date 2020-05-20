@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 
+	log "github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -14,6 +15,7 @@ import (
 type MongoJobsStorage struct {
 	DatabaseName   string
 	CollectionName string
+	Logger         *log.Logger
 
 	jobs       chan Job
 	collection *mongo.Collection
@@ -59,7 +61,6 @@ func (s *MongoJobsStorage) GetJob() (Job, error) {
 	if err != nil {
 		return job, err
 	}
-
 	return job, nil
 }
 
@@ -88,5 +89,6 @@ func (s *MongoJobsStorage) flush(quantity int) error {
 		jobs = append(jobs, job)
 	}
 	_, err := s.collection.InsertMany(ctx, jobs)
+	s.Logger.Debugf("Saved %d jobs", quantity)
 	return err
 }

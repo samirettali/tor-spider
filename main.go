@@ -33,15 +33,16 @@ func main() {
 	parallelism := flag.Int("p", 4, "parallelism of workers")
 	flag.Parse()
 
-	results := make(chan PageInfo, 1000)
-	msgChan := make(chan string, 10)
-	errChan := make(chan error, 10)
-	debugChan := make(chan string, 10)
+	logger := log.New()
+	// logger.SetReportCaller(true)
+	logger.SetFormatter(&log.TextFormatter{
+		FullTimestamp: true,
+	})
 
 	if *debug {
-		log.SetLevel(log.DebugLevel)
+		logger.SetLevel(log.DebugLevel)
 	} else if *verbose {
-		log.SetLevel(log.InfoLevel)
+		logger.SetLevel(log.InfoLevel)
 	}
 
 	// Setting up storage
@@ -59,21 +60,23 @@ func main() {
 
 	elasticURI, ok := os.LookupEnv("ELASTIC_URI")
 	if !ok {
-		log.Error("You must set ELASTIC_URI env variable")
+		logger.Error("You must set ELASTIC_URI env variable")
 	}
 	elasticIndex, ok := os.LookupEnv("ELASTIC_INDEX")
 	if !ok {
-		log.Error("You must set ELASTIC_INDEX env variable")
+		logger.Error("You must set ELASTIC_INDEX env variable")
 	}
 	pageStorage := &ElasticPageStorage{
 		URI:        elasticURI,
 		Index:      elasticIndex,
 		BufferSize: 100,
+		Logger:     logger,
 	}
 
 	jobsStorage := &MongoJobsStorage{
 		DatabaseName:   os.Getenv("MONGO_DB"),
 		CollectionName: os.Getenv("MONGO_COL"),
+		Logger:         logger,
 	}
 
 	// Workers starter
@@ -81,12 +84,12 @@ func main() {
 		storage:     visitedStorage,
 		jobsStorage: jobsStorage,
 		pageStorage: pageStorage,
-		msgChan:     msgChan,
+		numWorkers:  *numWorkers,
+		parallelism: *parallelism,
+		depth:       *depth,
+		Logger:      logger,
 	}
-	spider.Init(*numWorkers, *parallelism, *depth, results)
-	spider.msgChan = msgChan
-	spider.errChan = errChan
-	spider.debugChan = debugChan
+	spider.Init()
 	if *blacklistFile != "" {
 		blacklist, err := readLines(*blacklistFile)
 		if err != nil {

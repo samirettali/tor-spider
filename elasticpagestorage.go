@@ -18,6 +18,7 @@ type ElasticPageStorage struct {
 	URI        string
 	Index      string
 	BufferSize int
+	Logger     *log.Logger
 
 	pages  chan PageInfo
 	client *elasticsearch.Client
@@ -102,6 +103,6 @@ func (e *ElasticPageStorage) flush() error {
 		msg := fmt.Sprintf("Failed to index %d documents", biStats.NumFailed)
 		return &SavePageError{msg}
 	}
-	log.Infof("Saved %d pages", biStats.NumAdded)
+	e.Logger.Infof("Saved %d pages", biStats.NumAdded)
 	return nil
 }

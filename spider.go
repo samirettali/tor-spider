@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -38,13 +37,12 @@ type Spider struct {
 	blacklist   []string
 	jobs        chan Job
 	results     chan PageInfo
-	errChan     chan error
-	msgChan     chan string
-	debugChan   chan string
 
 	storage     storage.Storage
 	jobsStorage JobsStorage
 	pageStorage PageStorage
+
+	Logger *log.Logger
 }
 
 // JobsStorage is an interface which handles the storage of the jobs when it's
@@ -56,28 +54,20 @@ type JobsStorage interface {
 }
 
 // PageStorage is an interface which handles tha storage of the visited pages
-// TODO implement Count
 type PageStorage interface {
 	Init() error
 	SavePage(PageInfo) error
 }
 
 // Init initialized all the struct values
-func (spider *Spider) Init(numWorkers int, parallelism int, depth int, results chan PageInfo) {
-	spider.jobs = make(chan Job, numWorkers*parallelism*100)
-	spider.depth = depth
-	spider.results = results
-	spider.numWorkers = numWorkers
-	spider.parallelism = parallelism
+func (spider *Spider) Init() {
+	spider.jobs = make(chan Job, spider.numWorkers*spider.parallelism*100)
+	spider.results = make(chan PageInfo, 100)
 	// defer storage.Client.Close()
 
 	spider.startWebServer()
 	spider.startJobsStorage()
 	spider.pageStorage.Init()
-
-	log.SetFormatter(&log.TextFormatter{
-		FullTimestamp: true,
-	})
 }
 
 func (spider *Spider) startWebServer() {
@@ -99,17 +89,16 @@ func (spider *Spider) startWebServer() {
 		spider.jobs <- Job{URL}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Ok"))
-		spider.msgChan <- "Added " + URL + " to jobs queue"
+		spider.Logger.Infof("Added %s to jobs queue", URL)
 	})
 	go http.ListenAndServe(addr, nil)
 	log.Info("Listening on " + addr)
 }
 
-func (spider *Spider) startJobsStorage() {
+func (spider *Spider) startJobsStorage() error {
 	err := spider.jobsStorage.Init()
 	if err != nil {
-		spider.errChan <- err
-		return
+		return err
 	}
 
 	delay := 50 * time.Millisecond
@@ -121,13 +110,13 @@ func (spider *Spider) startJobsStorage() {
 				job, err := spider.jobsStorage.GetJob()
 				if err != nil {
 					if _, ok := err.(*NoJobsError); ok {
-						spider.debugChan <- "No jobs in Storage"
+						spider.Logger.Debug("No jobs in storage")
 					} else {
-						spider.errChan <- err
+						spider.Logger.Error(err)
 					}
 				} else {
 					spider.jobs <- job
-					spider.debugChan <- fmt.Sprintf("Got Job %v", job)
+					spider.Logger.Debugf("Got Job %v", job)
 				}
 			} else {
 				time.Sleep(delay)
@@ -142,15 +131,14 @@ func (spider *Spider) startJobsStorage() {
 				job := <-spider.jobs
 				err := spider.jobsStorage.SaveJob(job)
 				if err != nil {
-					spider.errChan <- err
-				} else {
-					spider.debugChan <- fmt.Sprintf("Saved Job %v", job)
+					log.Error(err)
 				}
 			} else {
 				time.Sleep(delay)
 			}
 		}
 	}()
+	return nil
 }
 
 func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
@@ -227,16 +215,14 @@ func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
 
 	// Debug responses
 	c.OnResponse(func(r *colly.Response) {
-		msg := fmt.Sprintf("Collector %s got %d for %s", id, r.StatusCode,
+		spider.Logger.Debugf("Collector %s got %d for %s", id, r.StatusCode,
 			r.Request.URL)
-		spider.debugChan <- msg
 	})
 
 	// Debug errors
 	c.OnError(func(r *colly.Response, err error) {
-		msg := fmt.Sprintf("Collector %s error for %s: %s", id, r.Request.URL,
+		spider.Logger.Debugf("Collector %s error for %s: %s", id, r.Request.URL,
 			err)
-		spider.debugChan <- msg
 	})
 
 	return c, nil
@@ -255,18 +241,8 @@ func (spider *Spider) Start() {
 	}()
 
 	ticker := time.NewTicker(1 * time.Second)
-	for {
-		select {
-		case err := <-spider.errChan:
-			log.Error(err)
-		case msg := <-spider.msgChan:
-			log.Info(msg)
-		case msg := <-spider.debugChan:
-			log.Debug(msg)
-		case <-ticker.C:
-			msg := fmt.Sprintf("There are %d jobs", len(spider.jobs))
-			log.Info(msg)
-		}
+	for range ticker.C {
+		spider.Logger.Infof("There are %d jobs", len(spider.jobs))
 	}
 }
 
@@ -274,22 +250,25 @@ func (spider *Spider) crawl(id string, sem chan int) {
 	defer func() {
 		<-sem
 	}()
-	spider.msgChan <- fmt.Sprintf("Collector %s started", id)
+	spider.Logger.Infof("Collector %s started", id)
 
 	// Set up the collector
 	c, err := spider.getCollector(id)
 	if err != nil {
-		spider.errChan <- err
+		spider.Logger.Error(err)
 		return
 	}
 
 	// Get seed url and visit it
 	for job := range spider.jobs {
 		seed := job.URL
-		spider.debugChan <- fmt.Sprintf("Collector %s seeded with %s", id,
-			seed)
+		spider.Logger.Debugf("Collector %s seeded with %s", id, seed)
 		c.Visit(seed)
+		// err := c.Visit(seed)
+		// if err != nil {
+		// 	spider.Logger.Error(err)
+		// 	return
+		// }
 		c.Wait()
 	}
-
 }
