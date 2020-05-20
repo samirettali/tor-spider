@@ -22,7 +22,15 @@ type Job struct {
 	URL string
 }
 
-// Spider is
+// PageInfo is a struct used to save the informations about a visited page
+type PageInfo struct {
+	URL    string
+	Body   string
+	Title  string
+	Status int
+}
+
+// Spider is a struct that represents a Spider
 type Spider struct {
 	numWorkers  int
 	parallelism int
@@ -47,13 +55,15 @@ type JobsStorage interface {
 	GetJob() (Job, error)
 }
 
-// type PageStorage interface {
-// 	Init() error
-// }
+// PageStorage is an interface which handles tha storage of the visited pages
+// TODO implement Count
+type PageStorage interface {
+	Init() error
+	SavePage(PageInfo) error
+}
 
 // Init initialized all the struct values
 func (spider *Spider) Init(numWorkers int, parallelism int, depth int, results chan PageInfo) {
-
 	spider.jobs = make(chan Job, numWorkers*parallelism*100)
 	spider.depth = depth
 	spider.results = results
@@ -63,6 +73,7 @@ func (spider *Spider) Init(numWorkers int, parallelism int, depth int, results c
 
 	spider.startWebServer()
 	spider.startJobsStorage()
+	spider.pageStorage.Init()
 
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
@@ -104,8 +115,9 @@ func (spider *Spider) startJobsStorage() {
 	delay := 50 * time.Millisecond
 
 	go func() {
+		lowerBound := int(float64(cap(spider.jobs)) * .15)
 		for {
-			if len(spider.jobs) < spider.numWorkers {
+			if len(spider.jobs) < lowerBound {
 				job, err := spider.jobsStorage.GetJob()
 				if err != nil {
 					if _, ok := err.(*NoJobsError); ok {
@@ -124,7 +136,7 @@ func (spider *Spider) startJobsStorage() {
 	}()
 
 	go func() {
-		upperBound := int(float64(cap(spider.jobs)) * .5)
+		upperBound := int(float64(cap(spider.jobs)) * .85)
 		for {
 			if len(spider.jobs) > upperBound {
 				job := <-spider.jobs
@@ -210,7 +222,7 @@ func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
 			Status: e.Response.StatusCode,
 			Title:  e.ChildText("head.title"),
 		}
-		spider.results <- result
+		spider.pageStorage.SavePage(result)
 	})
 
 	// Debug responses
@@ -252,8 +264,7 @@ func (spider *Spider) Start() {
 		case msg := <-spider.debugChan:
 			log.Debug(msg)
 		case <-ticker.C:
-			msg := fmt.Sprintf("There are %d jobs and %d results", len(spider.jobs),
-				len(spider.results))
+			msg := fmt.Sprintf("There are %d jobs", len(spider.jobs))
 			log.Info(msg)
 		}
 	}

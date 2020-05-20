@@ -9,20 +9,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// PageInfo is a struct used to save the informations about a visited page
-type PageInfo struct {
-	URL    string
-	Body   string
-	Title  string
-	Status int
-}
-
-// PageStorage is an interface which handles tha storage of the visited pages
-type PageStorage interface {
-	Init() error
-	Start(results <-chan PageInfo, errChan chan<- error)
-}
-
 func readLines(path string) ([]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -71,22 +57,30 @@ func main() {
 		Prefix:   "0",
 	}
 
-	pageStorage := &ElasticPageStorage{}
-	err := pageStorage.Init()
-	if err != nil {
-		log.Fatalf(err.Error())
+	elasticURI, ok := os.LookupEnv("ELASTIC_URI")
+	if !ok {
+		log.Error("You must set ELASTIC_URI env variable")
 	}
-	go pageStorage.Start(results, msgChan, errChan)
+	elasticIndex, ok := os.LookupEnv("ELASTIC_INDEX")
+	if !ok {
+		log.Error("You must set ELASTIC_INDEX env variable")
+	}
+	pageStorage := &ElasticPageStorage{
+		URI:        elasticURI,
+		Index:      elasticIndex,
+		BufferSize: 100,
+	}
 
 	jobsStorage := &MongoJobsStorage{
-		DatabaseName:   "spider",
-		CollectionName: "jobs",
+		DatabaseName:   os.Getenv("MONGO_DB"),
+		CollectionName: os.Getenv("MONGO_COL"),
 	}
 
 	// Workers starter
 	spider := &Spider{
 		storage:     visitedStorage,
 		jobsStorage: jobsStorage,
+		pageStorage: pageStorage,
 		msgChan:     msgChan,
 	}
 	spider.Init(*numWorkers, *parallelism, *depth, results)
