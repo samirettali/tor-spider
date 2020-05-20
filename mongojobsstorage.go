@@ -69,7 +69,10 @@ func (s *MongoJobsStorage) SaveJob(job Job) error {
 	case s.jobs <- job:
 		return nil
 	default:
-		s.flush(len(s.jobs))
+		err := s.flush(len(s.jobs))
+		if err != nil {
+			return err
+		}
 		s.jobs <- job
 		return nil
 
