@@ -20,3 +20,5 @@
 ## Collectors
 - [x] Make another collector for URLs added from the webserver, in order to be
     able to crawl clearnet and subreddits
+- [x] Merge getCollector function and use a flag to get an onion one or a normal
+    one
