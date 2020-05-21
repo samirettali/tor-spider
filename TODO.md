@@ -3,6 +3,8 @@
 - [x] Change all `os.Getenv` to `os.LookupEnv`
 - [ ] Implement graph
 - [X] Use logger object
+- [ ] Save timed out links and the number of times it timed out, use it to
+    revisit pages
 
 ## Concurrency
 - [X] Fix `msgChan` and `errChan` sizes in order to prevent deadlock
