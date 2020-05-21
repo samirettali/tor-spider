@@ -94,22 +94,9 @@ func (spider *Spider) startWebServer() {
 			w.Write([]byte("Missing url"))
 			return
 		}
-		_, err := url.Parse(URL)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("Invalid url"))
-			return
-		}
-		c, err := spider.getInputCollector()
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(err.Error()))
-			return
-		}
-		c.Visit(URL)
+		go spider.crawl(URL, true)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Ok"))
-		spider.Logger.Infof("Started InputCollector on %s", URL)
 	})
 	go http.ListenAndServe(addr, nil)
 	log.Info("Listening on " + addr)
@@ -327,7 +314,7 @@ func (spider *Spider) Start() {
 			job := <-spider.jobs
 			sem <- 1
 			go func(seed string) {
-				spider.crawl(seed)
+				spider.crawl(seed, false)
 				<-sem
 			}(job.URL)
 		}
@@ -339,8 +326,15 @@ func (spider *Spider) Start() {
 	}
 }
 
-func (spider *Spider) crawl(seed string) {
-	c, err := spider.getCollector()
+func (spider *Spider) crawl(seed string, input bool) {
+	var c *colly.Collector
+	var err error
+	if input {
+		c, err = spider.getInputCollector()
+	} else {
+		c, err = spider.getCollector()
+	}
+
 	if err != nil {
 		spider.Logger.Error(err)
 		return
