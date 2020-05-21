@@ -91,10 +91,16 @@ func (spider *Spider) startWebServer() {
 			w.Write([]byte("Invalid url"))
 			return
 		}
-		spider.jobs <- Job{URL}
+		c, err := spider.getInputCollector()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(err.Error()))
+			return
+		}
+		c.Visit(URL)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Ok"))
-		spider.Logger.Infof("Added %s to jobs queue", URL)
+		spider.Logger.Infof("Started InputCollector on %s", URL)
 	})
 	go http.ListenAndServe(addr, nil)
 	log.Info("Listening on " + addr)
@@ -223,6 +229,64 @@ func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
 	// Debug errors
 	c.OnError(func(r *colly.Response, err error) {
 		spider.Logger.Debugf("Collector %s error for %s: %s", id, r.Request.URL,
+			err)
+	})
+
+	return c, nil
+}
+
+func (spider *Spider) getInputCollector() (*colly.Collector, error) {
+	c := colly.NewCollector(
+		colly.MaxDepth(3),
+		colly.Async(true),
+		colly.IgnoreRobotsTxt(),
+	)
+
+	c.MaxBodySize = 1000 * 1000
+
+	extensions.RandomUserAgent(c)
+	extensions.Referer(c)
+
+	proxyURL, err := url.Parse(spider.proxyURI)
+	if err != nil {
+		return nil, err
+	}
+
+	c.WithTransport(&http.Transport{
+		Proxy: http.ProxyURL(proxyURL),
+		DialContext: (&net.Dialer{
+			Timeout: 30 * time.Second,
+			// KeepAlive: 30 * time.Second,
+			DualStack: true,
+		}).DialContext,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableKeepAlives:     true,
+	})
+
+	c.Limit(&colly.LimitRule{
+		DomainGlob:  "*",
+		Parallelism: spider.parallelism,
+	})
+
+	// Get all the links
+	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
+		foundURL := e.Request.AbsoluteURL(e.Attr("href"))
+		spider.jobs <- Job{foundURL}
+		e.Request.Visit(foundURL)
+	})
+
+	// Debug responses
+	c.OnResponse(func(r *colly.Response) {
+		spider.Logger.Debugf("InputCollector got %d for %s", r.StatusCode,
+			r.Request.URL)
+	})
+
+	// Debug errors
+	c.OnError(func(r *colly.Response, err error) {
+		spider.Logger.Debugf("InputCollector error for %s: %s", r.Request.URL,
 			err)
 	})
 
