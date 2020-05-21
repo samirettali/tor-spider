@@ -3,7 +3,7 @@ module github.com/samirettali/tor-spider
 go 1.14
 
 require (
-	github.com/PuerkitoBio/goquery v1.5.1 // indirect
+	github.com/PuerkitoBio/goquery v1.5.1
 	github.com/antchfx/htmlquery v1.2.3 // indirect
 	github.com/antchfx/xmlquery v1.2.4 // indirect
 	github.com/cenkalti/backoff/v4 v4.0.2

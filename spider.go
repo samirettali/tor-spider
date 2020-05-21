@@ -6,8 +6,10 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/gocolly/colly"
 	"github.com/gocolly/colly/extensions"
 	"github.com/gocolly/colly/storage"
@@ -214,12 +216,21 @@ func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
 	})
 
 	// Save result
-	c.OnHTML("html", func(e *colly.HTMLElement) {
+	c.OnResponse(func(r *colly.Response) {
+		body := string(r.Body)
+		bodyReader := strings.NewReader(body)
+		dom, err := goquery.NewDocumentFromReader(bodyReader)
+		title := ""
+		if err != nil {
+			spider.Logger.Error(err)
+		} else {
+			title = dom.Find("title").Contents().Text()
+		}
 		result := PageInfo{
-			URL:    e.Request.URL.String(),
-			Body:   e.Text,
-			Status: e.Response.StatusCode,
-			Title:  e.ChildText("head.title"),
+			URL:    r.Request.URL.String(),
+			Body:   body,
+			Status: r.StatusCode,
+			Title:  title,
 		}
 		spider.pageStorage.SavePage(result)
 	})
