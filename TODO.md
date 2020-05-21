@@ -1,10 +1,7 @@
 ## General
-- [ ] Save all data on SIGINT
 - [x] Change all `os.Getenv` to `os.LookupEnv`
 - [ ] Implement graph
 - [X] Use logger object
-- [ ] Save timed out links and the number of times it timed out, use it to
-    revisit pages
 
 ## Concurrency
 - [X] Fix `msgChan` and `errChan` sizes in order to prevent deadlock
@@ -12,10 +9,13 @@
 ## Storage
 - [x] Make `PageStorage` an interface
 - [x] Refactor `ElasticPageStorage`
+- [ ] Save all data on SIGINT
 - [ ] Make `ElasticPageStorage` concurrent
 - [ ] Make `MongoJobsStorage` concurrent
 - [ ] Store responses headers
 - [ ] Save pages in case of error
+- [ ] Save timed out links and the number of times it timed out, use it to
+    revisit pages
 
 ## Collectors
 - [ ] Make another collector for URLs added from the webserver, in order to be
