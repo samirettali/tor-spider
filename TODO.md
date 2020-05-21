@@ -18,5 +18,5 @@
     revisit pages
 
 ## Collectors
-- [ ] Make another collector for URLs added from the webserver, in order to be
+- [x] Make another collector for URLs added from the webserver, in order to be
     able to crawl clearnet and subreddits
