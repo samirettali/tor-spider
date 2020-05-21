@@ -58,7 +58,9 @@ func main() {
 		DB:       0,
 		Prefix:   "0",
 	}
-	defer visitedStorage.Client.Close()
+	defer func() {
+		visitedStorage.Client.Close()
+	}()
 
 	// Elastic for page saving
 	elasticURI, ok := os.LookupEnv("ELASTIC_URI")
