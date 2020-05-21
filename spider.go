@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +37,7 @@ type Spider struct {
 	jobs        chan Job
 	results     chan PageInfo
 	proxyURI    string
+	collector   *colly.Collector
 
 	storage     storage.Storage
 	jobsStorage JobsStorage
@@ -61,20 +61,27 @@ type PageStorage interface {
 }
 
 // Init initialized all the struct values
-func (spider *Spider) Init() {
+func (spider *Spider) Init() error {
 	spider.jobs = make(chan Job, spider.numWorkers*spider.parallelism*100)
 	spider.results = make(chan PageInfo, 100)
+	c, err := spider.getCollector()
+	if err != nil {
+		return err
+	}
+	spider.collector = c
 	// defer storage.Client.Close()
 
 	spider.startWebServer()
 
 	if err := spider.startJobsStorage(); err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	if err := spider.pageStorage.Init(); err != nil {
-		log.Fatal(err)
+		return err
 	}
+
+	return nil
 }
 
 func (spider *Spider) startWebServer() {
@@ -154,7 +161,7 @@ func (spider *Spider) startJobsStorage() error {
 	return nil
 }
 
-func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
+func (spider *Spider) getCollector() (*colly.Collector, error) {
 	disallowed := make([]*regexp.Regexp, len(spider.blacklist))
 	for index, b := range spider.blacklist {
 		disallowed[index] = regexp.MustCompile(b)
@@ -234,19 +241,21 @@ func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
 			Status: r.StatusCode,
 			Title:  title,
 		}
-		spider.pageStorage.SavePage(result)
+		err = spider.pageStorage.SavePage(result)
+		if err != nil {
+			spider.Logger.Error(err)
+		}
 	})
 
 	// Debug responses
 	c.OnResponse(func(r *colly.Response) {
-		spider.Logger.Debugf("Collector %s got %d for %s", id, r.StatusCode,
+		spider.Logger.Debugf("Got %d for %s", r.StatusCode,
 			r.Request.URL)
 	})
 
 	// Debug errors
 	c.OnError(func(r *colly.Response, err error) {
-		spider.Logger.Debugf("Collector %s error for %s: %s", id, r.Request.URL,
-			err)
+		spider.Logger.Debugf("Error while visiting %s: %v", r.Request.URL, err)
 	})
 
 	return c, nil
@@ -312,45 +321,35 @@ func (spider *Spider) getInputCollector() (*colly.Collector, error) {
 
 // Start starts the crawlers and logs messages
 func (spider *Spider) Start() {
+	sem := make(chan int, spider.numWorkers)
 	go func() {
-		id := 0
-		sem := make(chan int, spider.numWorkers)
 		for {
 			sem <- 1
-			go spider.crawl(strconv.Itoa(id), sem)
-			id++
+			job := <-spider.jobs
+			go spider.crawl(job.URL, sem)
 		}
 	}()
 
 	ticker := time.NewTicker(1 * time.Second)
 	for range ticker.C {
-		spider.Logger.Infof("There are %d jobs", len(spider.jobs))
+		spider.Logger.Infof("There are %d jobs and %d collectors running", len(spider.jobs), len(sem))
 	}
 }
 
-func (spider *Spider) crawl(id string, sem chan int) {
+func (spider *Spider) crawl(seed string, sem chan int) {
 	defer func() {
 		<-sem
 	}()
-	spider.Logger.Infof("Collector %s started", id)
 
-	// Set up the collector
-	c, err := spider.getCollector(id)
+	c, err := spider.getCollector()
 	if err != nil {
 		spider.Logger.Error(err)
 		return
 	}
 
-	// Get seed url and visit it
-	for job := range spider.jobs {
-		seed := job.URL
-		spider.Logger.Debugf("Collector %s seeded with %s", id, seed)
-		c.Visit(seed)
-		// err := c.Visit(seed)
-		// if err != nil {
-		// 	spider.Logger.Error(err)
-		// 	return
-		// }
-		c.Wait()
+	err = c.Visit(seed)
+	if err == nil {
+		spider.Logger.Debugf("Collector started on %s", seed)
 	}
+	c.Wait()
 }
