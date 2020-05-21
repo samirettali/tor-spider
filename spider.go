@@ -86,7 +86,14 @@ func (spider *Spider) startWebServer() {
 			w.Write([]byte("Missing url"))
 			return
 		}
-		go spider.crawl(URL, true)
+		go func() {
+			c, err := spider.getInputCollector()
+			if err != nil {
+				spider.Logger.Error(err)
+				return
+			}
+			spider.crawl(URL, c)
+		}()
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Ok"))
 	})
@@ -307,8 +314,15 @@ func (spider *Spider) Start() {
 			job := <-spider.jobs
 			sem <- 1
 			go func(seed string) {
-				spider.crawl(seed, false)
-				<-sem
+				defer func() {
+					<-sem
+				}()
+				c, err := spider.getCollector()
+				if err != nil {
+					spider.Logger.Error(err)
+					return
+				}
+				spider.crawl(seed, c)
 			}(job.URL)
 		}
 	}()
@@ -319,21 +333,8 @@ func (spider *Spider) Start() {
 	}
 }
 
-func (spider *Spider) crawl(seed string, input bool) {
-	var c *colly.Collector
-	var err error
-	if input {
-		c, err = spider.getInputCollector()
-	} else {
-		c, err = spider.getCollector()
-	}
-
-	if err != nil {
-		spider.Logger.Error(err)
-		return
-	}
-
-	err = c.Visit(seed)
+func (spider *Spider) crawl(seed string, c *colly.Collector) {
+	err := c.Visit(seed)
 	if err == nil {
 		spider.Logger.Debugf("Collector started on %s", seed)
 	}
