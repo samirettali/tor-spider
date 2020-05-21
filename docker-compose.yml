@@ -17,26 +17,20 @@ services:
       memlock:
         soft: -1
         hard: -1
-    ports:
-      - 9200:9200
 
   kibana:
     image: docker.elastic.co/kibana/kibana:7.6.1
     ports:
-      - 5601:5601
+      - 127.0.0.1:5601:5601
     depends_on:
       - elasticsearch
 
   mongo:
     image: mongo
-    ports:
-      - 27017:27017
 
   tor:
     image: multitor
     command: bash -c "multitor --init 20 --user root --socks-port 9000 --control-port 9900 --proxy privoxy --haproxy --verbose --debug > /tmp/multitor.log && tail -f /tmp/multitor.log"
-    ports:
-      - 16379:16379
 
   spider:
     image: tor-spider
@@ -46,7 +40,7 @@ services:
       - elasticsearch
       - mongo
     ports:
-      - 8888:8888
+      - 127.0.0.1:8888:8888
     environment:
       - REDIS_URI=${REDIS_URI}
       - ELASTIC_URI=${ELASTIC_URI}
