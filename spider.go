@@ -324,8 +324,8 @@ func (spider *Spider) Start() {
 	sem := make(chan int, spider.numWorkers)
 	go func() {
 		for {
-			sem <- 1
 			job := <-spider.jobs
+			sem <- 1
 			go spider.crawl(job.URL, sem)
 		}
 	}()
