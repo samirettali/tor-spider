@@ -46,6 +46,7 @@ func main() {
 	}
 
 	// Setting up storage
+	// Redis for visited pages
 	redisURI, ok := os.LookupEnv("REDIS_URI")
 	if !ok {
 		log.Fatal("You must set REDIS_URI env variable")
@@ -57,7 +58,9 @@ func main() {
 		DB:       0,
 		Prefix:   "0",
 	}
+	defer visitedStorage.Client.Close()
 
+	// Elastic for page saving
 	elasticURI, ok := os.LookupEnv("ELASTIC_URI")
 	if !ok {
 		logger.Error("You must set ELASTIC_URI env variable")
@@ -73,6 +76,7 @@ func main() {
 		Logger:     logger,
 	}
 
+	// Mongo for jobs storage
 	mongoURI, ok := os.LookupEnv("MONGO_URI")
 	if !ok {
 		logger.Error("You must define MONGO_URI env variable")
@@ -92,11 +96,11 @@ func main() {
 		Logger:         logger,
 	}
 
-	// Workers starter
 	proxyURI, ok := os.LookupEnv("PROXY_URI")
 	if !ok {
 		logger.Error("You must set PROXY_URI env variable")
 	}
+
 	spider := &Spider{
 		storage:     visitedStorage,
 		jobsStorage: jobsStorage,

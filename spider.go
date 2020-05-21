@@ -37,7 +37,6 @@ type Spider struct {
 	jobs        chan Job
 	results     chan PageInfo
 	proxyURI    string
-	collector   *colly.Collector
 
 	storage     storage.Storage
 	jobsStorage JobsStorage
@@ -64,13 +63,6 @@ type PageStorage interface {
 func (spider *Spider) Init() error {
 	spider.jobs = make(chan Job, spider.numWorkers*spider.parallelism*100)
 	spider.results = make(chan PageInfo, 100)
-	c, err := spider.getCollector()
-	if err != nil {
-		return err
-	}
-	spider.collector = c
-	// defer storage.Client.Close()
-
 	spider.startWebServer()
 
 	if err := spider.startJobsStorage(); err != nil {
@@ -118,6 +110,7 @@ func (spider *Spider) startJobsStorage() error {
 				if err != nil {
 					if _, ok := err.(*NoJobsError); ok {
 						spider.Logger.Debug("No jobs in storage")
+						time.Sleep(delay)
 					} else {
 						spider.Logger.Error(err)
 					}
