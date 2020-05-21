@@ -167,8 +167,10 @@ func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
 			disallowed...,
 		),
 		colly.URLFilters(
-			regexp.MustCompile("http://.+\\.onion.*"),
-			regexp.MustCompile("https://.+\\.onion.*"),
+			regexp.MustCompile(`http://[a-zA-Z2-7]{16}\.onion.*`),
+			regexp.MustCompile(`http://[a-zA-Z2-7]{56}\.onion.*`),
+			regexp.MustCompile(`https://[a-zA-Z2-7]{16}\.onion.*`),
+			regexp.MustCompile(`https://[a-zA-Z2-7]{56}\.onion.*`),
 		),
 	)
 
