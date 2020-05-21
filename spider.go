@@ -326,7 +326,10 @@ func (spider *Spider) Start() {
 		for {
 			job := <-spider.jobs
 			sem <- 1
-			go spider.crawl(job.URL, sem)
+			go func(seed string) {
+				spider.crawl(seed)
+				<-sem
+			}(job.URL)
 		}
 	}()
 
@@ -336,11 +339,7 @@ func (spider *Spider) Start() {
 	}
 }
 
-func (spider *Spider) crawl(seed string, sem chan int) {
-	defer func() {
-		<-sem
-	}()
-
+func (spider *Spider) crawl(seed string) {
 	c, err := spider.getCollector()
 	if err != nil {
 		spider.Logger.Error(err)
