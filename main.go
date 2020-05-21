@@ -107,13 +107,17 @@ func main() {
 		depth:       *depth,
 		Logger:      logger,
 	}
-	spider.Init()
 	if *blacklistFile != "" {
 		blacklist, err := readLines(*blacklistFile)
 		if err != nil {
 			log.Fatal("Error while reading " + *blacklistFile)
 		}
 		spider.blacklist = blacklist
+	}
+
+	err := spider.Init()
+	if err != nil {
+		log.Fatalf("Spider ended with %v", err)
 	}
 
 	spider.Start()
