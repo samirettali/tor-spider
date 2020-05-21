@@ -153,12 +153,16 @@ func (spider *Spider) startJobsStorage() error {
 }
 
 func (spider *Spider) getCollector(id string) (*colly.Collector, error) {
+	disallowed := make([]*regexp.Regexp, len(spider.blacklist))
+	for index, b := range spider.blacklist {
+		disallowed[index] = regexp.MustCompile(b)
+	}
 	c := colly.NewCollector(
 		colly.MaxDepth(spider.depth),
 		colly.Async(true),
 		colly.IgnoreRobotsTxt(),
-		colly.DisallowedDomains(
-			spider.blacklist...,
+		colly.DisallowedURLFilters(
+			disallowed...,
 		),
 		colly.URLFilters(
 			regexp.MustCompile("http://.+\\.onion.*"),
