@@ -16,6 +16,7 @@
 - [ ] Save pages in case of error
 - [ ] Save timed out links and the number of times it timed out, use it to
     revisit pages
+- [X] Open connections only when needed
 
 ## Collectors
 - [x] Make another collector for URLs added from the webserver, in order to be
