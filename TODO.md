@@ -2,6 +2,7 @@
 - [x] Change all `os.Getenv` to `os.LookupEnv`
 - [ ] Implement graph
 - [X] Use logger object
+- [ ] Implement [service](https://rauljordan.com/2020/03/10/building-a-service-registry-in-go.html)
 
 ## Concurrency
 - [X] Fix `msgChan` and `errChan` sizes in order to prevent deadlock
@@ -16,7 +17,8 @@
 - [ ] Save pages in case of error
 - [ ] Save timed out links and the number of times it timed out, use it to
     revisit pages
-- [X] Open connections only when needed
+- [ ] Open connections only when needed
+- [ ] Organize data by domain
 
 ## Collectors
 - [x] Make another collector for URLs added from the webserver, in order to be
