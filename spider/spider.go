@@ -266,7 +266,7 @@ func (spider *Spider) getSeedCollector() (*colly.Collector, error) {
 
 	// Debug errors
 	c.OnError(func(r *colly.Response, err error) {
-		spider.Logger.Errorf("SeedCollector: %s", err)
+		spider.Logger.Debugf("SeedCollector: %s", err)
 	})
 
 	return c, nil
