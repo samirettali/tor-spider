@@ -37,8 +37,8 @@ func main() {
 	depth := flag.Int("d", 1, "depth of each collector")
 	verbose := flag.Bool("v", false, "verbose")
 	debug := flag.Bool("x", false, "debug")
-	numWorkers := flag.Int("w", 4, "number of workers")
-	parallelism := flag.Int("p", 2, "parallelism of workers")
+	numWorkers := flag.Int("w", 32, "number of workers")
+	parallelism := flag.Int("p", 4, "parallelism of workers")
 	flag.Parse()
 
 	logger := log.New()
