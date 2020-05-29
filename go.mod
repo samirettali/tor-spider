@@ -14,11 +14,13 @@ require (
 	github.com/gocolly/redisstorage v0.0.0-20190812112800-1745c5e6d0ba
 	github.com/kennygrant/sanitize v1.2.4 // indirect
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible // indirect
+	github.com/micro/go-micro v1.18.0
 	github.com/saintfish/chardet v0.0.0-20120816061221-3af4cd4741ca // indirect
-	github.com/sirupsen/logrus v1.4.2
+	github.com/sirupsen/logrus v1.6.0
 	github.com/temoto/robotstxt v1.1.1 // indirect
 	github.com/velebak/colly-sqlite3-storage v0.0.0-20190425160637-c76683d5163d
 	github.com/withmandala/go-log v0.1.0
 	go.mongodb.org/mongo-driver v1.3.3
-	google.golang.org/appengine v1.6.6 // indirect
+	golang.org/x/sys v0.0.0-20200523222454-059865788121 // indirect
+	google.golang.org/appengine v1.6.6
 )

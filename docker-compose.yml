@@ -31,6 +31,8 @@ services:
   tor:
     image: multitor
     command: bash -c "multitor --init 20 --user root --socks-port 9000 --control-port 9900 --proxy privoxy --haproxy --verbose --debug > /tmp/multitor.log && tail -f /tmp/multitor.log"
+    ports:
+      - 127.0.0.1:16380:16380
 
   spider:
     image: tor-spider
@@ -40,7 +42,7 @@ services:
       - elasticsearch
       - mongo
     ports:
-      - 127.0.0.1:8888:8888
+      - 127.0.0.1:8080:8080
     environment:
       - REDIS_URI=${REDIS_URI}
       - ELASTIC_URI=${ELASTIC_URI}
