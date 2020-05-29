@@ -6,6 +6,7 @@
 
 ## Concurrency
 - [X] Fix `msgChan` and `errChan` sizes in order to prevent deadlock
+- [ ] Improve goroutines tracking with waitgroups because right now it's a mess
 
 ## Storage
 - [x] Make `PageStorage` an interface
