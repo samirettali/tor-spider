@@ -1,11 +1,11 @@
 docker:
 	docker build -t tor-spider .
 
+docker-run:
+	docker-compose up spider
+
+build:
+	go build
+
 run:
-	docker-compose up
-
-build-local:
-	go build .
-
-run-local:
-	./tor-spider -v -w 32 -p 4 -d 2 -b blacklist.txt
+	bash -c "source local-env && ./tor-spider -v -b blacklist.txt"
