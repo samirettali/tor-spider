@@ -47,7 +47,7 @@ func (e *ElasticPageStorage) Start() {
 	return
 }
 
-// Save page adds a page to the channel and if it can't, it flushes it
+// SavePage page adds a page to the channel and if it can't, it flushes it
 func (e *ElasticPageStorage) SavePage(page PageInfo) {
 	// TODO can it hang?
 	select {
@@ -59,7 +59,6 @@ func (e *ElasticPageStorage) SavePage(page PageInfo) {
 			e.Logger.Error(err)
 		}
 		e.pages <- page
-
 	}
 }
 
