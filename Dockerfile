@@ -24,4 +24,4 @@ RUN cp /build/blacklist.txt .
 
 # Using a blacklist in order to prevend ending up crawling huge sites like 
 # facebook and pornhub
-CMD ./tor-spider -v -b blacklist.txt
+CMD ./tor-spider

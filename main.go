@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"net/url"
 	"os"
@@ -12,10 +11,36 @@ import (
 	"time"
 
 	"github.com/gocolly/redisstorage"
+	"github.com/kelseyhightower/envconfig"
+	"github.com/pkg/profile"
 	"github.com/samirettali/tor-spider/serviceregistry"
 	"github.com/samirettali/tor-spider/spider"
 	log "github.com/sirupsen/logrus"
 )
+
+type config struct {
+	RedisURI      string `envconfig:"REDIS_URI"`
+	ElasticURI    string `envconfig:"ELASTIC_URI"`
+	ElasticIndex  string `envconfig:"ELASTIC_INDEX"`
+	ProxyURI      string `envconfig:"PROXY_URI"`
+	MongoURI      string `envconfig:"MONGO_URI"`
+	MongoDB       string `envconfig:"MONGO_DB"`
+	MongoCol      string `envconfig:"MONGO_COL"`
+	LogLevel      string `envconfig:"LOG_LEVEL" default:"error"`
+	BlacklistFile string `envconfig:"BLACKLIST_FILE" required:"false"`
+	Depth         int    `envconfig:"DEPTH" default:"2"`
+	Workers       int    `envconfig:"WORKERS" default:"32"`
+	Parallelism   int    `envconfig:"PARALLELISM" default:"4"`
+}
+
+func loadConfig() (*config, error) {
+	var cfg config
+	err := envconfig.Process("", &cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
 
 func readLines(path string) ([]string, error) {
 	file, err := os.Open(path)
@@ -33,63 +58,39 @@ func readLines(path string) ([]string, error) {
 }
 
 func main() {
-	blacklistFile := flag.String("b", "", "blacklist file")
-	depth := flag.Int("d", 1, "depth of each collector")
-	verbose := flag.Bool("v", false, "verbose")
-	debug := flag.Bool("x", false, "debug")
-	numWorkers := flag.Int("w", 32, "number of workers")
-	parallelism := flag.Int("p", 4, "parallelism of workers")
-	flag.Parse()
+	defer profile.Start().Stop()
 
 	logger := log.New()
-	// logger.SetReportCaller(true)
 	logger.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
 	})
 
-	if *debug {
-		logger.SetLevel(log.DebugLevel)
-	} else if *verbose {
+	config, err := loadConfig()
+	if err != nil {
+		logger.Fatal(err)
+	}
+	fmt.Printf("%+v\n", config)
+
+	switch {
+	case config.LogLevel == "error":
+		logger.SetLevel(log.ErrorLevel)
+		break
+	case config.LogLevel == "info":
 		logger.SetLevel(log.InfoLevel)
+		break
+	case config.LogLevel == "debug":
+		logger.SetLevel(log.DebugLevel)
+		break
 	}
+	fmt.Println(logger.GetLevel())
 
-	// Check env variables
-	redisURI, ok := os.LookupEnv("REDIS_URI")
-	if !ok {
-		log.Fatal("You must set REDIS_URI env variable")
-	}
-	elasticURI, ok := os.LookupEnv("ELASTIC_URI")
-	if !ok {
-		logger.Error("You must set ELASTIC_URI env variable")
-	}
-	elasticIndex, ok := os.LookupEnv("ELASTIC_INDEX")
-	if !ok {
-		logger.Error("You must set ELASTIC_INDEX env variable")
-	}
-	mongoURI, ok := os.LookupEnv("MONGO_URI")
-	if !ok {
-		logger.Error("You must define MONGO_URI env variable")
-	}
-	mongoDB, ok := os.LookupEnv("MONGO_DB")
-	if !ok {
-		logger.Error("You must set MONGO_DB env variable")
-	}
-	mongoCol, ok := os.LookupEnv("MONGO_COL")
-	if !ok {
-		logger.Error("You must set MONGO_COL env variable")
-	}
-
-	proxyURI, ok := os.LookupEnv("PROXY_URI")
-	if !ok {
-		logger.Error("You must set PROXY_URI env variable")
-	}
-	proxyURL, err := url.Parse(proxyURI)
+	proxyURL, err := url.Parse(config.ProxyURI)
 	if err != nil {
 		log.Panic(err)
 	}
 
 	visitedStorage := &redisstorage.Storage{
-		Address:  redisURI,
+		Address:  config.RedisURI,
 		Password: "",
 		DB:       0,
 		Prefix:   "0",
@@ -97,10 +98,10 @@ func main() {
 
 	registry := serviceregistry.NewServiceRegistry()
 
-	elasticPageStorage := spider.NewElasticPageStorage(elasticURI, elasticIndex, 100)
+	elasticPageStorage := spider.NewElasticPageStorage(config.ElasticURI, config.ElasticIndex, 100)
 	elasticPageStorage.Logger = logger
 
-	mongoJobsStorage := spider.NewMongoJobsStorage(mongoURI, mongoDB, mongoCol, 10000, *numWorkers)
+	mongoJobsStorage := spider.NewMongoJobsStorage(config.MongoURI, config.MongoDB, config.MongoCol, 10000, config.Workers)
 	mongoJobsStorage.Logger = logger
 
 	registry.RegisterService(elasticPageStorage)
@@ -123,9 +124,9 @@ func main() {
 		JS:          js,
 		PS:          ps,
 		ProxyURL:    proxyURL,
-		NumWorkers:  *numWorkers,
-		Parallelism: *parallelism,
-		Depth:       *depth,
+		NumWorkers:  config.Workers,
+		Parallelism: config.Parallelism,
+		Depth:       config.Depth,
 		Logger:      logger,
 	}
 
@@ -133,10 +134,10 @@ func main() {
 		log.Fatalf("Spider ended with %v", err)
 	}
 
-	if *blacklistFile != "" {
-		blacklist, err := readLines(*blacklistFile)
+	if config.BlacklistFile != "" {
+		blacklist, err := readLines(config.BlacklistFile)
 		if err != nil {
-			log.Fatal("Error while reading " + *blacklistFile)
+			log.Fatal("Error while reading " + config.BlacklistFile)
 		}
 		spider.Blacklist = blacklist
 	}
@@ -145,11 +146,10 @@ func main() {
 	registry.StartAll()
 
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT)
-	// signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	done := make(chan struct{})
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
-	ticker := time.NewTicker(time.Second * 3)
+	ticker := time.NewTicker(time.Second * 10)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
