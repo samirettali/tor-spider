@@ -3,6 +3,7 @@
 - [ ] Implement graph
 - [X] Use logger object
 - [x] Implement [service](https://rauljordan.com/2020/03/10/building-a-service-registry-in-go.html)
+- [ ] Periodically check proxy health
 
 ## Concurrency
 - [X] Fix `msgChan` and `errChan` sizes in order to prevent deadlock
