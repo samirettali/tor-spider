@@ -2,7 +2,7 @@
 - [x] Change all `os.Getenv` to `os.LookupEnv`
 - [ ] Implement graph
 - [X] Use logger object
-- [ ] Implement [service](https://rauljordan.com/2020/03/10/building-a-service-registry-in-go.html)
+- [x] Implement [service](https://rauljordan.com/2020/03/10/building-a-service-registry-in-go.html)
 
 ## Concurrency
 - [X] Fix `msgChan` and `errChan` sizes in order to prevent deadlock
@@ -11,14 +11,14 @@
 ## Storage
 - [x] Make `PageStorage` an interface
 - [x] Refactor `ElasticPageStorage`
-- [ ] Save all data on SIGINT
+- [x] Save all data on SIGINT
 - [ ] Make `ElasticPageStorage` concurrent
 - [ ] Make `MongoJobsStorage` concurrent
 - [ ] Store responses headers
 - [ ] Save pages in case of error
 - [ ] Save timed out links and the number of times it timed out, use it to
     revisit pages
-- [ ] Open connections only when needed
+- [x] Open connections only when needed
 - [ ] Organize data by domain
 
 ## Collectors
