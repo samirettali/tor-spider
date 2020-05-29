@@ -56,16 +56,18 @@ type Spider struct {
 	JS      JobsStorage
 	PS      PageStorage
 
-	wg           *sync.WaitGroup
-	sem          chan struct{}
-	done         chan struct{}
-	torCollector *colly.Collector
-	jobs         chan Job
+	wg                *sync.WaitGroup
+	sem               chan struct{}
+	runningCollectors chan struct{}
+	done              chan struct{}
+	torCollector      *colly.Collector
+	jobs              chan Job
 }
 
 // Init initialized all the struct values
 func (spider *Spider) Init() error {
 	spider.sem = make(chan struct{}, spider.NumWorkers)
+	spider.runningCollectors = make(chan struct{}, spider.NumWorkers)
 	spider.done = make(chan struct{})
 	spider.jobs = spider.JS.GetJobsChannel()
 	spider.wg = &sync.WaitGroup{}
@@ -300,7 +302,7 @@ func (spider *Spider) Stop() error {
 // Status returns how many collector are running
 func (spider *Spider) Status() string {
 	return fmt.Sprintf("%dx%d collectors running",
-		len(spider.sem), spider.Parallelism)
+		len(spider.runningCollectors), spider.Parallelism)
 }
 
 func (spider *Spider) startCollector() {
@@ -319,7 +321,7 @@ func (spider *Spider) startCollector() {
 		for {
 			select {
 			case job := <-spider.jobs:
-
+				spider.runningCollectors <- struct{}{}
 				c.Visit(job.URL)
 				err = c.Visit(job.URL)
 				if err != nil {
@@ -331,6 +333,7 @@ func (spider *Spider) startCollector() {
 				spider.Logger.Debugf("Collector %d started on %s", c.ID, job.URL)
 				c.Wait()
 				spider.Logger.Debugf("Collector %d ended on %s", c.ID, job.URL)
+				<-spider.runningCollectors
 			case <-spider.done:
 				return
 			}
