@@ -23,10 +23,11 @@ type MongoJobsStorage struct {
 	URI            string
 	BufferSize     int
 
-	jobs chan Job
-	done chan struct{}
-	wg   *sync.WaitGroup
-	min  int
+	jobs    chan Job
+	done    chan struct{}
+	filling chan struct{}
+	wg      *sync.WaitGroup
+	min     int
 }
 
 // NewMongoJobsStorage returns an instance
@@ -38,23 +39,14 @@ func NewMongoJobsStorage(URI string, dbName string, colName string, bufSize int,
 		jobs:           make(chan Job, bufSize),
 	}
 	s.done = make(chan struct{})
+	s.filling = make(chan struct{}, 1)
 	s.min = min
 	s.wg = &sync.WaitGroup{}
 	return s
 }
 
-// Start starts the getter and the saver the collection
+// Start does nothing in this case
 func (s *MongoJobsStorage) Start() {
-	s.wg.Add(2)
-	go func() {
-		defer s.wg.Done()
-		s.getter()
-	}()
-
-	go func() {
-		defer s.wg.Done()
-		s.saver()
-	}()
 }
 
 // Stop signals to the getter and the saver to stop
@@ -82,44 +74,43 @@ func (s *MongoJobsStorage) Status() string {
 	}
 }
 
-func (s *MongoJobsStorage) countJobsInDb() (int64, error) {
-	col, err := s.getCollectionClient()
-	if err != nil {
-		return 0, err
-	}
-	defer col.Database().Client().Disconnect(context.Background())
-	count, err := col.CountDocuments(context.Background(), bson.D{})
-	if err != nil {
-		return 0, err
-	}
-	return count, nil
-
-}
-
-// GetJob returns a job
+// GetJob returns a job if it's cached in the jobs channel, otherwise, it caches
+// jobs from the database if there is no other goroutine doing it. It timeouts
+// after 3 seconds.
 func (s *MongoJobsStorage) GetJob() (Job, error) {
 	select {
 	case job := <-s.jobs:
 		return job, nil
 	default:
-		return Job{}, &NoJobsError{"No jobs"}
+		select {
+		case s.filling <- struct{}{}:
+			s.Logger.Debug("Started filler")
+			s.fillCache()
+			s.Logger.Debug("Ended filler")
+			<-s.filling
+		default:
+			s.Logger.Debug("Filler already running")
+		}
+		select {
+		case job := <-s.jobs:
+			return job, nil
+		case <-time.After(3 * time.Second):
+			return Job{}, &NoJobsError{"No jobs"}
+		}
 	}
 }
 
-// SaveJob saves a job
+// SaveJob adds a job to the channel if it's not full, otherwise it flushes the
+// channel to the db and then adds the job to the channel.
 func (s *MongoJobsStorage) SaveJob(job Job) {
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		select {
-		case s.jobs <- job:
-			return
-		default:
-			n := len(s.jobs) - s.min
-			s.flush(n)
-			s.jobs <- job
-		}
-	}()
+	select {
+	case s.jobs <- job:
+		return
+	default:
+		n := len(s.jobs) - s.min
+		s.flush(n)
+		s.jobs <- job
+	}
 }
 
 func (s *MongoJobsStorage) getCollectionClient() (*mongo.Collection, error) {
@@ -138,22 +129,6 @@ func (s *MongoJobsStorage) getCollectionClient() (*mongo.Collection, error) {
 	return db.Collection(s.CollectionName), nil
 }
 
-func (s *MongoJobsStorage) getter() {
-	for {
-		select {
-		case <-s.done:
-			return
-		default:
-			if len(s.jobs) < s.min {
-				n := s.fillCache()
-				if n == 0 {
-					time.Sleep(time.Second)
-				}
-			}
-		}
-	}
-}
-
 func (s *MongoJobsStorage) fillCache() int {
 	var col *mongo.Collection
 	var err error
@@ -163,7 +138,8 @@ func (s *MongoJobsStorage) fillCache() int {
 	}
 
 	defer func() {
-		if err := col.Database().Client().Disconnect(context.Background()); err != nil {
+		ctx := context.Background()
+		if err := col.Database().Client().Disconnect(ctx); err != nil {
 			s.Logger.Error(err)
 		}
 	}()
@@ -204,32 +180,6 @@ func (s *MongoJobsStorage) fillCache() int {
 
 }
 
-// SaveJob adds a job to the jobs channel, upon checking if it's full
-func (s *MongoJobsStorage) saver() {
-	bound := int(float64(cap(s.jobs)) * .75)
-	for {
-		select {
-		case <-s.done:
-			return
-		default:
-			if len(s.jobs) > bound {
-				_, err := s.flush(bound / 2)
-				if err != nil {
-					s.Logger.Error(err)
-				}
-			} else {
-				time.Sleep(50 * time.Millisecond)
-			}
-		}
-	}
-}
-
-// GetJobsChannel returns the channel on which jobs are sent and received from
-// the storage
-func (s *MongoJobsStorage) GetJobsChannel() chan Job {
-	return s.jobs
-}
-
 func (s *MongoJobsStorage) flush(max int) (int, error) {
 	jobs := make([]interface{}, 0)
 loop:
@@ -257,4 +207,17 @@ loop:
 		s.Logger.Errorf("%d jobs were not saved", len(jobs)-inserted)
 	}
 	return inserted, nil
+}
+
+func (s *MongoJobsStorage) countJobsInDb() (int64, error) {
+	col, err := s.getCollectionClient()
+	if err != nil {
+		return 0, err
+	}
+	defer col.Database().Client().Disconnect(context.Background())
+	count, err := col.CountDocuments(context.Background(), bson.D{})
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }

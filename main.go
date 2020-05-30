@@ -12,7 +12,6 @@ import (
 
 	"github.com/gocolly/redisstorage"
 	"github.com/kelseyhightower/envconfig"
-	"github.com/pkg/profile"
 	"github.com/samirettali/tor-spider/serviceregistry"
 	"github.com/samirettali/tor-spider/spider"
 	log "github.com/sirupsen/logrus"
@@ -58,8 +57,6 @@ func readLines(path string) ([]string, error) {
 }
 
 func main() {
-	defer profile.Start().Stop()
-
 	logger := log.New()
 	logger.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
@@ -69,7 +66,6 @@ func main() {
 	if err != nil {
 		logger.Fatal(err)
 	}
-	fmt.Printf("%+v\n", config)
 
 	switch {
 	case config.LogLevel == "error":
@@ -82,7 +78,6 @@ func main() {
 		logger.SetLevel(log.DebugLevel)
 		break
 	}
-	fmt.Println(logger.GetLevel())
 
 	proxyURL, err := url.Parse(config.ProxyURI)
 	if err != nil {

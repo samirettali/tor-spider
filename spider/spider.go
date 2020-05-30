@@ -38,9 +38,8 @@ type PageStorage interface {
 
 // JobsStorage is an interface which handles tha storage of the visited pages
 type JobsStorage interface {
-	// SaveJob(Job)
-	// GetJob() (Job, error)
-	GetJobsChannel() chan Job
+	SaveJob(Job)
+	GetJob() (Job, error)
 }
 
 // Spider is a struct that represents a Spider
@@ -61,7 +60,6 @@ type Spider struct {
 	runningCollectors chan struct{}
 	done              chan struct{}
 	torCollector      *colly.Collector
-	jobs              chan Job
 }
 
 // Init initialized all the struct values
@@ -69,21 +67,24 @@ func (spider *Spider) Init() error {
 	spider.sem = make(chan struct{}, spider.NumWorkers)
 	spider.runningCollectors = make(chan struct{}, spider.NumWorkers)
 	spider.done = make(chan struct{})
-	spider.jobs = spider.JS.GetJobsChannel()
 	spider.wg = &sync.WaitGroup{}
 
 	err := spider.initCollector()
+
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
 func (spider *Spider) initCollector() error {
 	disallowed := make([]*regexp.Regexp, len(spider.Blacklist))
+
 	for index, b := range spider.Blacklist {
 		disallowed[index] = regexp.MustCompile(b)
 	}
+
 	c := colly.NewCollector(
 		colly.MaxDepth(spider.Depth),
 		colly.Async(true),
@@ -126,7 +127,9 @@ func (spider *Spider) initCollector() error {
 	if err := c.SetStorage(spider.Storage); err != nil {
 		return err
 	}
+
 	spider.torCollector = c
+
 	return nil
 }
 
@@ -176,9 +179,8 @@ func (spider *Spider) getCollector() (*colly.Collector, error) {
 	// Get all the links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		foundURL := e.Request.AbsoluteURL(e.Attr("href"))
-		// e.Request.Visit(foundURL)
 		if foundURL != "" && e.Request.Depth == spider.Depth {
-			spider.jobs <- Job{foundURL}
+			spider.JS.SaveJob(Job{foundURL})
 		} else {
 			e.Request.Visit(foundURL)
 		}
@@ -255,8 +257,7 @@ func (spider *Spider) getSeedCollector() (*colly.Collector, error) {
 	// Get all the links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		foundURL := e.Request.AbsoluteURL(e.Attr("href"))
-		spider.jobs <- Job{foundURL}
-		// spider.JS.SaveJob(Job{foundURL})
+		spider.JS.SaveJob(Job{foundURL})
 		e.Request.Visit(foundURL)
 	})
 
@@ -318,22 +319,19 @@ func (spider *Spider) startCollector() {
 			return
 		}
 
+		ticker := time.NewTicker(time.Second)
 		for {
 			select {
-			case job := <-spider.jobs:
-				spider.runningCollectors <- struct{}{}
-				c.Visit(job.URL)
-				err = c.Visit(job.URL)
-				if err != nil {
-					spider.Logger.Debug(err)
-					// continue
-					// return
+			case <-ticker.C:
+				job, err := spider.JS.GetJob()
+				if err == nil {
+					spider.runningCollectors <- struct{}{}
+					c.Visit(job.URL)
+					spider.Logger.Debugf("Collector %d started on %s", c.ID, job.URL)
+					c.Wait()
+					spider.Logger.Debugf("Collector %d ended on %s", c.ID, job.URL)
+					<-spider.runningCollectors
 				}
-
-				spider.Logger.Debugf("Collector %d started on %s", c.ID, job.URL)
-				c.Wait()
-				spider.Logger.Debugf("Collector %d ended on %s", c.ID, job.URL)
-				<-spider.runningCollectors
 			case <-spider.done:
 				return
 			}
