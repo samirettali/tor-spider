@@ -70,13 +70,10 @@ func main() {
 	switch {
 	case config.LogLevel == "error":
 		logger.SetLevel(log.ErrorLevel)
-		break
 	case config.LogLevel == "info":
 		logger.SetLevel(log.InfoLevel)
-		break
 	case config.LogLevel == "debug":
 		logger.SetLevel(log.DebugLevel)
-		break
 	}
 
 	proxyURL, err := url.Parse(config.ProxyURI)
