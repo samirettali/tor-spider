@@ -96,19 +96,24 @@ func main() {
 	mongoJobsStorage := spider.NewMongoJobsStorage(config.MongoURI, config.MongoDB, config.MongoCol, 10000, config.Workers)
 	mongoJobsStorage.Logger = logger
 
-	registry.RegisterService(elasticPageStorage)
-	registry.RegisterService(mongoJobsStorage)
+	if err := registry.RegisterService(elasticPageStorage); err != nil {
+		logger.Fatal(err)
+	}
+
+	if err := registry.RegisterService(mongoJobsStorage); err != nil {
+		logger.Fatal(err)
+	}
 
 	// TODO use generic interface as it's meant to be done. For now this will
 	// do.
 	var js *spider.MongoJobsStorage
-	if err2 := registry.FetchService(&js); err2 != nil {
-		log.Panic(err2)
+	if err := registry.FetchService(&js); err != nil {
+		logger.Fatal(err)
 	}
 
 	var ps *spider.ElasticPageStorage
-	if err3 := registry.FetchService(&ps); err3 != nil {
-		log.Panic(err3)
+	if err := registry.FetchService(&ps); err != nil {
+		logger.Fatal(err)
 	}
 
 	spider := &spider.Spider{
