@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,7 +45,6 @@ func NewElasticPageStorage(uri string, index string, bufferSize int) *ElasticPag
 func (e *ElasticPageStorage) Start() {
 	e.wg.Add(1)
 	defer e.wg.Done()
-	return
 }
 
 // SavePage page adds a page to the channel and if it can't, it flushes it
@@ -139,21 +139,27 @@ func (e *ElasticPageStorage) Stop() error {
 
 // Status return the status
 func (e *ElasticPageStorage) Status() string {
-	s := ""
+	var b strings.Builder
+	b.Grow(40)
+
 	select {
 	case <-e.done:
-		s += fmt.Sprintf("Stopped. ")
+		fmt.Fprintf(&b, "Stopped. ")
 	default:
-		s += "Running. "
-		count, err := e.count()
-		if err != nil {
-			s += fmt.Sprintf("Elastic is unreachable %v", err)
-		} else {
-			s += fmt.Sprintf("There are %d pages in Elastic", count)
-		}
+		fmt.Fprintf(&b, "Running. ")
 	}
-	s += fmt.Sprintf(", there are %d pages waiting to be saved", len(e.pages))
-	return s
+
+	count, err := e.count()
+
+	if err != nil {
+		fmt.Fprintf(&b, "Elastic is unreachable %v", err)
+	} else {
+		fmt.Fprintf(&b, "There are %d pages in Elastic", count)
+	}
+
+	fmt.Fprintf(&b, ", there are %d pages waiting to be saved", len(e.pages))
+
+	return b.String()
 }
 
 func (e *ElasticPageStorage) count() (int, error) {

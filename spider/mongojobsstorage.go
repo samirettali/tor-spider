@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,18 +61,25 @@ func (s *MongoJobsStorage) Stop() error {
 
 // Status returns the status
 func (s *MongoJobsStorage) Status() string {
+	var b strings.Builder
+	b.Grow(40)
+
 	select {
 	case <-s.done:
-		return fmt.Sprintf("Stopped. There are %d cached jobs waiting to be saved", len(s.jobs))
+		fmt.Fprint(&b, "Stopped. ")
 	default:
-		count, err := s.countJobsInDb()
-
-		if err != nil {
-			return fmt.Sprintf("Error %v", err)
-		}
-
-		return fmt.Sprintf("Running. There are %d jobs in the DB and %d cached jobs", count, len(s.jobs))
+		fmt.Fprint(&b, "Running. ")
 	}
+	fmt.Fprintf(&b, "There are %d cached jobs ", len(s.jobs))
+	count, err := s.countJobsInDb()
+
+	if err != nil {
+		fmt.Fprintf(&b, "and db is unreachable %v", err)
+	} else {
+		fmt.Fprintf(&b, "and %d jobs in the db", count)
+	}
+
+	return b.String()
 }
 
 // GetJob returns a job if it's cached in the jobs channel, otherwise, it caches

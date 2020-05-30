@@ -300,17 +300,20 @@ func (spider *Spider) Stop() error {
 
 // Status returns how many collector are running
 func (spider *Spider) Status() string {
-	s := ""
+	var b strings.Builder
+	b.Grow(40)
+
 	select {
 	case <-spider.done:
-		s += fmt.Sprint("Stopped. ")
+		fmt.Fprint(&b, "Stopped. ")
 	default:
-		s += fmt.Sprint("Running. ")
-
+		fmt.Fprint(&b, "Running. ")
 	}
-	s += fmt.Sprintf("%dx%d collectors running", len(spider.runningCollectors),
+
+	fmt.Fprintf(&b, "%dx%d collectors running", len(spider.runningCollectors),
 		spider.Parallelism)
-	return s
+
+	return b.String()
 }
 
 func (spider *Spider) startCollector() {
