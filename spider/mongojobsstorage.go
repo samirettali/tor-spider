@@ -164,6 +164,8 @@ func (s *MongoJobsStorage) fillCache() int {
 	}
 
 	count := 0
+	// TODO fixed size array?
+	toDelete := make([]string, 0)
 	for cur.Next(context.Background()) {
 		var job Job
 		err := cur.Decode(&job)
@@ -171,19 +173,24 @@ func (s *MongoJobsStorage) fillCache() int {
 			s.Logger.Error(err)
 		} else {
 			count++
-
-		}
-		s.jobs <- job
-		_, err = col.DeleteOne(context.Background(), job)
-		if err != nil {
-			s.Logger.Error(err)
+			s.jobs <- job
+			toDelete = append(toDelete, job.URL)
 		}
 	}
 
 	if err := cur.Err(); err != nil {
 		log.Fatal(err)
 	}
+
 	cur.Close(context.Background())
+
+	filter := bson.M{"url": bson.M{"$in": toDelete}}
+	res, err := col.DeleteMany(context.Background(), filter)
+	if err != nil {
+		s.Logger.Error(err)
+	}
+	s.Logger.Debugf("Got %d jobs, deleted %d jobs", count, res.DeletedCount)
+
 	return count
 
 }
