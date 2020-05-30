@@ -139,7 +139,10 @@ func main() {
 		spider.Blacklist = blacklist
 	}
 
-	registry.RegisterService(spider)
+	if err := registry.RegisterService(spider); err != nil {
+		logger.Fatal(err)
+	}
+
 	registry.StartAll()
 
 	stop := make(chan os.Signal, 1)
