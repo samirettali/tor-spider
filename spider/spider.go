@@ -161,13 +161,11 @@ func (spider *Spider) startWebServer() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Ok"))
 	})
-	spider.wg.Add(2)
+	spider.wg.Add(1)
 	go s.ListenAndServe()
 	go func() {
 		<-spider.done
 		s.Shutdown(context.Background())
-		spider.wg.Done()
-		spider.Logger.Infof("Shutdown web server")
 		spider.wg.Done()
 	}()
 	log.Infof("Listening on %s", addr)
@@ -302,8 +300,17 @@ func (spider *Spider) Stop() error {
 
 // Status returns how many collector are running
 func (spider *Spider) Status() string {
-	return fmt.Sprintf("%dx%d collectors running",
-		len(spider.runningCollectors), spider.Parallelism)
+	s := ""
+	select {
+	case <-spider.done:
+		s += fmt.Sprint("Stopped. ")
+	default:
+		s += fmt.Sprint("Running. ")
+
+	}
+	s += fmt.Sprintf("%dx%d collectors running", len(spider.runningCollectors),
+		spider.Parallelism)
+	return s
 }
 
 func (spider *Spider) startCollector() {
