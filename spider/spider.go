@@ -15,6 +15,7 @@ import (
 	"github.com/gocolly/colly"
 	"github.com/gocolly/colly/extensions"
 	"github.com/gocolly/colly/storage"
+	tld "github.com/jpillora/go-tld"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -177,7 +178,7 @@ func (spider *Spider) getCollector() (*colly.Collector, error) {
 	// Get all the links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		foundURL := e.Request.AbsoluteURL(e.Attr("href"))
-		if foundURL != "" && e.Request.Depth == spider.Depth {
+		if foundURL != "" && e.Request.Depth == spider.Depth && isOnion(foundURL) {
 			spider.JS.SaveJob(Job{foundURL})
 		} else {
 			e.Request.Visit(foundURL)
@@ -255,7 +256,9 @@ func (spider *Spider) getSeedCollector() (*colly.Collector, error) {
 	// Get all the links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		foundURL := e.Request.AbsoluteURL(e.Attr("href"))
-		spider.JS.SaveJob(Job{foundURL})
+		if isOnion(foundURL) {
+			spider.JS.SaveJob(Job{foundURL})
+		}
 		e.Request.Visit(foundURL)
 	})
 
@@ -314,6 +317,11 @@ func (spider *Spider) Status() string {
 		spider.Parallelism)
 
 	return b.String()
+}
+
+func isOnion(url string) bool {
+	u, err := tld.Parse(url)
+	return err == nil && u.TLD == "onion"
 }
 
 func (spider *Spider) startCollector() {
