@@ -18,18 +18,19 @@ import (
 )
 
 type config struct {
-	RedisURI      string `envconfig:"REDIS_URI"`
-	ElasticURI    string `envconfig:"ELASTIC_URI"`
-	ElasticIndex  string `envconfig:"ELASTIC_INDEX"`
-	ProxyURI      string `envconfig:"PROXY_URI"`
-	MongoURI      string `envconfig:"MONGO_URI"`
-	MongoDB       string `envconfig:"MONGO_DB"`
-	MongoCol      string `envconfig:"MONGO_COL"`
-	LogLevel      string `envconfig:"LOG_LEVEL" default:"error"`
-	BlacklistFile string `envconfig:"BLACKLIST_FILE" required:"false"`
-	Depth         int    `envconfig:"DEPTH" default:"2"`
-	Workers       int    `envconfig:"WORKERS" default:"32"`
-	Parallelism   int    `envconfig:"PARALLELISM" default:"4"`
+	RedisURI          string `envconfig:"REDIS_URI"`
+	ElasticURI        string `envconfig:"ELASTIC_URI"`
+	ElasticIndex      string `envconfig:"ELASTIC_INDEX"`
+	ProxyURI          string `envconfig:"PROXY_URI"`
+	MongoURI          string `envconfig:"MONGO_URI"`
+	MongoDB           string `envconfig:"MONGO_DB"`
+	MongoCol          string `envconfig:"MONGO_COL"`
+	LogLevel          string `envconfig:"LOG_LEVEL" default:"error"`
+	BlacklistFile     string `envconfig:"BLACKLIST_FILE" required:"false"`
+	Depth             int    `envconfig:"DEPTH" default:"2"`
+	Workers           int    `envconfig:"WORKERS" default:"32"`
+	Parallelism       int    `envconfig:"PARALLELISM" default:"4"`
+	LogStatusInterval int    `envconfig:"LOG_STATUS_INTERVAL" default:"3"`
 }
 
 func loadConfig() (*config, error) {
@@ -149,7 +150,7 @@ func main() {
 	done := make(chan struct{})
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
-	ticker := time.NewTicker(time.Second * 10)
+	ticker := time.NewTicker(time.Second * time.Duration(config.LogStatusInterval))
 
 	var wg sync.WaitGroup
 	wg.Add(1)
