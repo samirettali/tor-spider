@@ -89,6 +89,10 @@ func main() {
 		Prefix:   "0",
 	}
 
+	defer func() {
+		visitedStorage.Client.Close()
+	}()
+
 	registry := serviceregistry.NewServiceRegistry()
 
 	elasticPageStorage := spider.NewElasticPageStorage(config.ElasticURI, config.ElasticIndex, 100)
