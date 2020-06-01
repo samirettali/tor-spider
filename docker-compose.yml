@@ -27,12 +27,13 @@ services:
 
   mongo:
     image: mongo
+    ports:
+      - 127.0.0.1:27017:27017
 
   tor:
-    image: multitor
-    command: bash -c "multitor --init 20 --user root --socks-port 9000 --control-port 9900 --proxy privoxy --haproxy --verbose --debug > /tmp/multitor.log && tail -f /tmp/multitor.log"
-    ports:
-      - 127.0.0.1:16380:16380
+    image: zeta0/alpine-tor
+    environment:
+      - tors=40
 
   spider:
     image: tor-spider
@@ -51,3 +52,9 @@ services:
       - MONGO_URI=${MONGO_URI}
       - MONGO_DB=${MONGO_DB}
       - MONGO_COL=${MONGO_COL}
+      - BLACKLIST_FILE=${BLACKLIST_FILE}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - WORKERS=${WORKERS}
+      - PARALLELISM=${PARALLELISM}
+      - DEPTH=${DEPTH}
+      - LOG_STATUS_INTERVAL=${LOG_STATUS_INTERVAL}
