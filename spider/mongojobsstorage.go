@@ -200,7 +200,9 @@ func (s *MongoJobsStorage) getJobsFromDb() ([]string, error) {
 	findOptions.SetLimit(int64(s.min))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
 	defer cancel()
-	cur, err := col.Find(ctx, bson.D{}, findOptions)
+
+	pipeline := []bson.M{bson.M{"$sample": bson.M{"size": s.min}}}
+	cur, err := col.Aggregate(ctx, pipeline)
 
 	if err != nil {
 		return nil, err

@@ -98,7 +98,7 @@ func main() {
 	elasticPageStorage := spider.NewElasticPageStorage(config.ElasticURI, config.ElasticIndex, 100)
 	elasticPageStorage.Logger = logger
 
-	mongoJobsStorage := spider.NewMongoJobsStorage(config.MongoURI, config.MongoDB, config.MongoCol, 10000, config.Workers)
+	mongoJobsStorage := spider.NewMongoJobsStorage(config.MongoURI, config.MongoDB, config.MongoCol, 1000, config.Workers)
 	mongoJobsStorage.Logger = logger
 
 	if err := registry.RegisterService(elasticPageStorage); err != nil {
