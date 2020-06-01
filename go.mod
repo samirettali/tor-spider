@@ -13,6 +13,7 @@ require (
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/gocolly/colly v1.2.0
 	github.com/gocolly/redisstorage v0.0.0-20190812112800-1745c5e6d0ba
+	github.com/jpillora/go-tld v1.0.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/kennygrant/sanitize v1.2.4 // indirect
 	github.com/mattn/go-sqlite3 v2.0.3+incompatible // indirect
@@ -22,6 +23,7 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	github.com/temoto/robotstxt v1.1.1 // indirect
 	github.com/velebak/colly-sqlite3-storage v0.0.0-20190425160637-c76683d5163d
+	github.com/weppos/publicsuffix-go v0.13.0
 	github.com/withmandala/go-log v0.1.0
 	go.mongodb.org/mongo-driver v1.3.3
 	golang.org/x/sys v0.0.0-20200523222454-059865788121 // indirect
