@@ -206,6 +206,11 @@ loop:
 			break loop
 		}
 	}
+
+	if len(jobs) == 0 {
+		return 0, nil
+	}
+
 	ctx := context.Background()
 	col, err := s.getCollectionClient()
 	if err != nil {
