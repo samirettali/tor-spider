@@ -118,6 +118,11 @@ func (s *MongoJobsStorage) SaveJob(job Job) {
 		n := len(s.jobs) - s.min
 		s.flush(n)
 		s.jobs <- job
+		select {
+		case s.jobs <- job:
+		case <-time.After(3 * time.Second):
+			s.Logger.Errorf("Cannot save Job %v", job)
+		}
 	}
 }
 
@@ -129,7 +134,9 @@ func (s *MongoJobsStorage) getCollectionClient() (*mongo.Collection, error) {
 		return nil, err
 	}
 
-	if err = client.Connect(context.Background()); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
+	if err = client.Connect(ctx); err != nil {
 		return nil, err
 	}
 
@@ -137,35 +144,73 @@ func (s *MongoJobsStorage) getCollectionClient() (*mongo.Collection, error) {
 	return db.Collection(s.CollectionName), nil
 }
 
-func (s *MongoJobsStorage) fillCache() int {
-	var col *mongo.Collection
-	var err error
-	if col, err = s.getCollectionClient(); err != nil {
-		s.Logger.Error(err)
-		return 0
-	}
-
-	defer func() {
-		ctx := context.Background()
-		if err := col.Database().Client().Disconnect(ctx); err != nil {
-			s.Logger.Error(err)
-		}
-	}()
-
-	findOptions := options.Find()
-	findOptions.SetLimit(int64(s.min))
-	cur, err := col.Find(context.Background(), bson.D{}, findOptions)
+func (s *MongoJobsStorage) fillCache() {
+	jobs, err := s.getJobsFromDb()
 
 	if err != nil {
 		if !errors.Is(err, mongo.ErrNoDocuments) {
 			s.Logger.Error(err)
 		}
-		return 0
+		return
 	}
+
+	deletedCount, err := s.deleteJobsFromDb(jobs)
+
+	if err != nil {
+		s.Logger.Error(err)
+		return
+	}
+
+	s.Logger.Debugf("Got %d jobs, deleted %d jobs", len(jobs), deletedCount)
+}
+
+func (s *MongoJobsStorage) deleteJobsFromDb(jobs []string) (int64, error) {
+	var col *mongo.Collection
+	var err error
+
+	if col, err = s.getCollectionClient(); err != nil {
+		return 0, err
+	}
+	defer col.Database().Client().Disconnect(context.Background())
+
+	filter := bson.M{"url": bson.M{"$in": jobs}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
+
+	res, err := col.DeleteMany(ctx, filter)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return res.DeletedCount, nil
+}
+
+func (s *MongoJobsStorage) getJobsFromDb() ([]string, error) {
+	var col *mongo.Collection
+	var err error
+	if col, err = s.getCollectionClient(); err != nil {
+		return nil, err
+	}
+
+	defer col.Database().Client().Disconnect(context.Background())
+
+	findOptions := options.Find()
+	findOptions.SetLimit(int64(s.min))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
+	cur, err := col.Find(ctx, bson.D{}, findOptions)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer cur.Close(context.Background())
 
 	count := 0
 	// TODO fixed size array?
-	toDelete := make([]string, 0)
+	jobs := make([]string, 0)
 	for cur.Next(context.Background()) {
 		var job Job
 		err := cur.Decode(&job)
@@ -174,7 +219,7 @@ func (s *MongoJobsStorage) fillCache() int {
 		} else {
 			count++
 			s.jobs <- job
-			toDelete = append(toDelete, job.URL)
+			jobs = append(jobs, job.URL)
 		}
 	}
 
@@ -182,17 +227,7 @@ func (s *MongoJobsStorage) fillCache() int {
 		log.Fatal(err)
 	}
 
-	cur.Close(context.Background())
-
-	filter := bson.M{"url": bson.M{"$in": toDelete}}
-	res, err := col.DeleteMany(context.Background(), filter)
-	if err != nil {
-		s.Logger.Error(err)
-	}
-	s.Logger.Debugf("Got %d jobs, deleted %d jobs", count, res.DeletedCount)
-
-	return count
-
+	return jobs, nil
 }
 
 func (s *MongoJobsStorage) flush(max int) (int, error) {
@@ -211,16 +246,17 @@ loop:
 		return 0, nil
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
 	col, err := s.getCollectionClient()
 	if err != nil {
 		// TODO save jobs
 		return 0, err
 	}
+	defer col.Database().Client().Disconnect(context.Background())
 	result, err := col.InsertMany(ctx, jobs)
 	if err != nil {
 		return 0, err
-
 	}
 	inserted := len(result.InsertedIDs)
 	if inserted != len(jobs) {
@@ -234,8 +270,11 @@ func (s *MongoJobsStorage) countJobsInDb() (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+
 	defer col.Database().Client().Disconnect(context.Background())
-	count, err := col.CountDocuments(context.Background(), bson.D{})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
+	count, err := col.CountDocuments(ctx, bson.D{})
 	if err != nil {
 		return 0, err
 	}

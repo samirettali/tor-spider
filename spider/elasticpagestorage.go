@@ -92,6 +92,8 @@ func (e *ElasticPageStorage) flush() (uint64, error) {
 		return 0, err
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
 	for {
 		select {
 		case page := <-e.pages:
@@ -102,7 +104,7 @@ func (e *ElasticPageStorage) flush() (uint64, error) {
 			}
 
 			err = bi.Add(
-				context.Background(),
+				ctx,
 				esutil.BulkIndexerItem{
 					Action: "index",
 					Body:   bytes.NewReader(data),
@@ -179,7 +181,9 @@ func (e *ElasticPageStorage) count() (int, error) {
 	countRequest := &esapi.CountRequest{
 		Index: []string{e.Index},
 	}
-	resp, err := countRequest.Do(context.Background(), client.Transport)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
+	resp, err := countRequest.Do(ctx, client.Transport)
 	if err != nil {
 		return 0, err
 	}
