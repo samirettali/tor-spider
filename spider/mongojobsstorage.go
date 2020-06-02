@@ -175,7 +175,7 @@ func (s *MongoJobsStorage) fillJobsChannel() {
 		defer func() {
 			<-s.filling
 		}()
-		s.Logger.Info("Started filler")
+		s.Logger.Debug("Started filler")
 
 		cur, err := s.getCursor()
 
@@ -215,8 +215,7 @@ func (s *MongoJobsStorage) fillJobsChannel() {
 			return
 		}
 
-		s.Logger.Infof("Got %d jobs, deleted %d jobs", len(jobs), deletedCount)
-		s.Logger.Info("Ended filler")
+		s.Logger.Debugf("Got %d jobs, deleted %d jobs", len(jobs), deletedCount)
 	}
 }
 
