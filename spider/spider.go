@@ -2,6 +2,7 @@ package spider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -56,17 +57,19 @@ type Spider struct {
 	JS      JobsStorage
 	PS      PageStorage
 
-	wg                *sync.WaitGroup
-	sem               chan struct{}
-	runningCollectors chan struct{}
-	done              chan struct{}
-	torCollector      *colly.Collector
+	wg                    *sync.WaitGroup
+	sem                   chan struct{}
+	runningCollectors     chan struct{}
+	runningSeedCollectors chan struct{}
+	done                  chan struct{}
+	torCollector          *colly.Collector
 }
 
 // Init initialized all the struct values
 func (spider *Spider) Init() error {
 	spider.sem = make(chan struct{}, spider.NumWorkers)
 	spider.runningCollectors = make(chan struct{}, spider.NumWorkers)
+	spider.runningSeedCollectors = make(chan struct{}, spider.NumWorkers)
 	spider.done = make(chan struct{})
 	spider.wg = &sync.WaitGroup{}
 
@@ -135,10 +138,10 @@ func (spider *Spider) initCollector() error {
 }
 
 func (spider *Spider) startWebServer() {
-	// Web listener
-	m := http.NewServeMux()
 	addr := ":8080"
+	m := http.NewServeMux()
 	s := http.Server{Addr: addr, Handler: m}
+
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		URL := r.URL.Query().Get("url")
 		if URL == "" {
@@ -146,29 +149,28 @@ func (spider *Spider) startWebServer() {
 			w.Write([]byte("Missing url"))
 			return
 		}
-		c, err := spider.getSeedCollector()
+		err := spider.startSeedCollector(URL)
+
 		if err != nil {
-			spider.Logger.Error(err)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(err.Error()))
 			return
 		}
-		spider.wg.Add(1)
-		go func() {
-			defer spider.wg.Done()
-			c.Visit(URL)
-			spider.Logger.Infof("Seed collector started on %s", URL)
-			c.Wait()
-			spider.Logger.Infof("Seed collector on %s ended", URL)
-		}()
+
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Ok"))
 	})
+
 	spider.wg.Add(1)
+
 	go s.ListenAndServe()
+
 	go func() {
 		<-spider.done
 		s.Shutdown(context.Background())
 		spider.wg.Done()
 	}()
+
 	log.Infof("Listening on %s", addr)
 }
 
@@ -312,7 +314,7 @@ func (spider *Spider) Status() string {
 		fmt.Fprint(&b, "Running. ")
 	}
 
-	fmt.Fprintf(&b, "%dx%d collectors running", len(spider.runningCollectors),
+	fmt.Fprintf(&b, "%dx%d collectors running and %dx%d seed collectors running", len(spider.runningCollectors), spider.Parallelism, len(spider.runningSeedCollectors),
 		spider.Parallelism)
 
 	return b.String()
@@ -361,5 +363,28 @@ func (spider *Spider) startCollector() {
 				<-spider.runningCollectors
 			}
 		}
+	}
+}
+
+func (spider *Spider) startSeedCollector(url string) error {
+	select {
+	case spider.runningSeedCollectors <- struct{}{}:
+		go func() {
+			spider.wg.Add(1)
+			c, err := spider.getSeedCollector()
+			if err != nil {
+				spider.Logger.Error(err)
+				return
+			}
+			c.Visit(url)
+			spider.Logger.Infof("Seed collector started on %s", url)
+			c.Wait()
+			spider.Logger.Infof("Seed collector on %s ended", url)
+			spider.wg.Done()
+			<-spider.runningSeedCollectors
+		}()
+		return nil
+	default:
+		return errors.New("Maximum number of seed collectors running, try later")
 	}
 }
