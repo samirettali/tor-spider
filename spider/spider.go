@@ -283,8 +283,7 @@ func (spider *Spider) Start() {
 	for {
 		select {
 		case spider.sem <- struct{}{}:
-			spider.wg.Add(1)
-			spider.startCollector()
+			go spider.startCollector()
 		case <-spider.done:
 			spider.wg.Wait()
 			return
@@ -325,34 +324,42 @@ func isOnion(url string) bool {
 }
 
 func (spider *Spider) startCollector() {
-	go func() {
-		defer func() {
-			spider.wg.Done()
-			<-spider.sem
-		}()
-		c, err := spider.getCollector()
+	spider.wg.Add(1)
 
-		if err != nil {
-			spider.Logger.Error(err)
+	defer func() {
+		spider.wg.Done()
+		<-spider.sem
+	}()
+
+	c, err := spider.getCollector()
+
+	if err != nil {
+		spider.Logger.Error(err)
+		return
+	}
+
+	ticker := time.NewTicker(time.Second)
+
+	for {
+		select {
+		case <-spider.done:
 			return
-		}
-
-		ticker := time.NewTicker(time.Second)
-		for {
-			select {
-			case <-ticker.C:
-				job, err := spider.JS.GetJob()
-				if err == nil {
-					spider.runningCollectors <- struct{}{}
-					c.Visit(job.URL)
+		case <-ticker.C:
+			job, err := spider.JS.GetJob()
+			if err == nil {
+				spider.runningCollectors <- struct{}{}
+				err := c.Visit(job.URL)
+				if err != nil {
+					spider.Logger.Debugf("Collector %d error: %s", c.ID, err.Error())
+				} else {
 					spider.Logger.Debugf("Collector %d started on %s", c.ID, job.URL)
-					c.Wait()
-					spider.Logger.Debugf("Collector %d ended on %s", c.ID, job.URL)
-					<-spider.runningCollectors
 				}
-			case <-spider.done:
-				return
+				c.Wait()
+				if err == nil {
+					spider.Logger.Debugf("Collector %d ended on %s", c.ID, job.URL)
+				}
+				<-spider.runningCollectors
 			}
 		}
-	}()
+	}
 }
