@@ -2,7 +2,6 @@ package spider
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -46,8 +45,22 @@ func NewMongoJobsStorage(URI string, dbName string, colName string, bufSize int,
 	return s
 }
 
-// Start does nothing in this case
+// Start checks one time at a second if there are enough jobs in the channel, and if there are not it fetches them from the database
 func (s *MongoJobsStorage) Start() {
+	s.wg.Add(1)
+	defer s.wg.Done()
+	ticker := time.NewTicker(time.Second)
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			if len(s.jobs) < s.min {
+				go s.fillJobsChannel()
+			}
+		}
+
+	}
 }
 
 // Stop signals to the getter and the saver to stop
@@ -89,22 +102,8 @@ func (s *MongoJobsStorage) GetJob() (Job, error) {
 	select {
 	case job := <-s.jobs:
 		return job, nil
-	default:
-		select {
-		case s.filling <- struct{}{}:
-			s.Logger.Debug("Started filler")
-			s.fillCache()
-			s.Logger.Debug("Ended filler")
-			<-s.filling
-		default:
-			s.Logger.Debug("Filler already running")
-		}
-		select {
-		case job := <-s.jobs:
-			return job, nil
-		case <-time.After(3 * time.Second):
-			return Job{}, &NoJobsError{"No jobs"}
-		}
+	case <-time.After(3 * time.Second):
+		return Job{}, &NoJobsError{"No jobs"}
 	}
 }
 
@@ -144,26 +143,6 @@ func (s *MongoJobsStorage) getCollectionClient() (*mongo.Collection, error) {
 	return db.Collection(s.CollectionName), nil
 }
 
-func (s *MongoJobsStorage) fillCache() {
-	jobs, err := s.getJobsFromDb()
-
-	if err != nil {
-		if !errors.Is(err, mongo.ErrNoDocuments) {
-			s.Logger.Error(err)
-		}
-		return
-	}
-
-	deletedCount, err := s.deleteJobsFromDb(jobs)
-
-	if err != nil {
-		s.Logger.Error(err)
-		return
-	}
-
-	s.Logger.Debugf("Got %d jobs, deleted %d jobs", len(jobs), deletedCount)
-}
-
 func (s *MongoJobsStorage) deleteJobsFromDb(jobs []string) (int64, error) {
 	var col *mongo.Collection
 	var err error
@@ -187,7 +166,61 @@ func (s *MongoJobsStorage) deleteJobsFromDb(jobs []string) (int64, error) {
 	return res.DeletedCount, nil
 }
 
-func (s *MongoJobsStorage) getJobsFromDb() ([]string, error) {
+func (s *MongoJobsStorage) fillJobsChannel() {
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	select {
+	case s.filling <- struct{}{}:
+		defer func() {
+			<-s.filling
+		}()
+		s.Logger.Info("Started filler")
+
+		cur, err := s.getCursor()
+
+		if err != nil {
+			s.Logger.Error(err)
+			return
+		}
+
+		defer cur.Close(context.Background())
+
+		jobs := make([]string, 0)
+
+	loop:
+		for cur.Next(context.Background()) {
+			var job Job
+			err := cur.Decode(&job)
+			if err != nil {
+				s.Logger.Error(err)
+			} else {
+				select {
+				case s.jobs <- job:
+					jobs = append(jobs, job.URL)
+				default:
+					break loop
+				}
+			}
+		}
+
+		if err := cur.Err(); err != nil {
+			log.Error(err)
+		}
+
+		deletedCount, err := s.deleteJobsFromDb(jobs)
+
+		if err != nil {
+			s.Logger.Error(err)
+			return
+		}
+
+		s.Logger.Infof("Got %d jobs, deleted %d jobs", len(jobs), deletedCount)
+		s.Logger.Info("Ended filler")
+	}
+}
+
+func (s *MongoJobsStorage) getCursor() (*mongo.Cursor, error) {
 	var col *mongo.Collection
 	var err error
 	if col, err = s.getCollectionClient(); err != nil {
@@ -208,28 +241,7 @@ func (s *MongoJobsStorage) getJobsFromDb() ([]string, error) {
 		return nil, err
 	}
 
-	defer cur.Close(context.Background())
-
-	count := 0
-	// TODO fixed size array?
-	jobs := make([]string, 0)
-	for cur.Next(context.Background()) {
-		var job Job
-		err := cur.Decode(&job)
-		if err != nil {
-			s.Logger.Error(err)
-		} else {
-			count++
-			s.jobs <- job
-			jobs = append(jobs, job.URL)
-		}
-	}
-
-	if err := cur.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	return jobs, nil
+	return cur, nil
 }
 
 func (s *MongoJobsStorage) flush(max int) (int, error) {
