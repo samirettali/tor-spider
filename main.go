@@ -75,6 +75,8 @@ func main() {
 		logger.SetLevel(log.InfoLevel)
 	case config.LogLevel == "debug":
 		logger.SetLevel(log.DebugLevel)
+	default:
+		logger.Fatalf("Invalid debug level: %s", config.LogLevel)
 	}
 
 	proxyURL, err := url.Parse(config.ProxyURI)
