@@ -41,9 +41,7 @@ func (s *ServiceRegistry) StartAll() {
 	log.Infof("Starting %d services: %v", len(s.serviceTypes), s.serviceTypes)
 	for _, kind := range s.serviceTypes {
 		log.Debugf("Starting service type %v", kind)
-		// TODO does it have to be a goroutine?
 		go s.services[kind].Start()
-		// s.services[kind].Start()
 	}
 }
 
@@ -53,6 +51,7 @@ func (s *ServiceRegistry) StopAll() {
 	for i := len(s.serviceTypes) - 1; i >= 0; i-- {
 		kind := s.serviceTypes[i]
 		service := s.services[kind]
+		// log.Infof("Stopping %s", kind)
 		if err := service.Stop(); err != nil {
 			log.Panicf("Could not stop the following service: %v, %v", kind, err)
 		}
@@ -95,84 +94,3 @@ func (s *ServiceRegistry) FetchService(service interface{}) error {
 	}
 	return fmt.Errorf("unknown service: %T", service)
 }
-
-// import (
-// 	"fmt"
-// 	"reflect"
-
-// 	log "github.com/sirupsen/logrus"
-// )
-
-// // Service is an interface that represents a service
-// type Service interface {
-// 	Start() error
-// 	Stop() error
-// 	Status() string
-// }
-
-// // type Status struct {
-// // 	msg string
-// // 	err error
-// // }
-
-// // ServiceRegistry holds all running services and their types
-// type ServiceRegistry struct {
-// 	services     map[reflect.Type]Service
-// 	serviceTypes []reflect.Type
-// }
-
-// func NewServiceRegistry() *ServiceRegistry {
-// 	return &ServiceRegistry{
-// 		services: make(map[reflect.Type]Service),
-// 	}
-// }
-
-// func (s *ServiceRegistry) RegisterService(service Service) error {
-// 	kind := reflect.TypeOf(service)
-// 	if _, exists := s.services[kind]; exists {
-// 		return fmt.Errorf("Service %v already exists", kind)
-// 	}
-// 	s.services[kind] = service
-// 	s.serviceTypes = append(s.serviceTypes, kind)
-// 	log.Infof("Registered service: %T", service)
-// 	return nil
-// }
-
-// func (s *ServiceRegistry) StartAll() {
-// 	log.Infof("Starting %d services: %v", len(s.serviceTypes), s.serviceTypes)
-// 	for _, kind := range s.serviceTypes {
-// 		log.Debugf("Starting service type %v", kind)
-// 		go s.services[kind].Start()
-// 	}
-// }
-
-// func (s *ServiceRegistry) StopAll() {
-// 	for i := len(s.serviceTypes) - 1; i >= 0; i-- {
-// 		kind := s.serviceTypes[i]
-// 		service := s.services[kind]
-// 		if err := service.Stop(); err != nil {
-// 			log.Panicf("Could not stop %v: %v", kind, err)
-// 		}
-// 	}
-// }
-
-// func (s *ServiceRegistry) FetchService(service interface{}) error {
-// 	if reflect.TypeOf(service).Kind() != reflect.Ptr {
-// 		return fmt.Errorf("Input must be of pointer type, received value type %T", service)
-// 	}
-// 	element := reflect.ValueOf(service).Elem()
-// 	if running, ok := s.services[element.Type()]; ok {
-// 		element.Set(reflect.ValueOf(running))
-// 		return nil
-// 	}
-// 	return fmt.Errorf("Unknown service: %T", service)
-// }
-
-// func (s *ServiceRegistry) Statuses() string {
-// 	status := ""
-// 	for kind, service := range s.services {
-// 		status += fmt.Sprintf("%T: %s\n", kind, service.Status())
-// 	}
-// 	return status
-
-// }
