@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -142,24 +143,8 @@ func (spider *Spider) startWebServer() {
 	m := http.NewServeMux()
 	s := http.Server{Addr: addr, Handler: m}
 
-	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		URL := r.URL.Query().Get("url")
-		if URL == "" {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("Missing url"))
-			return
-		}
-		err := spider.startSeedCollector(URL)
-
-		if err != nil {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(err.Error()))
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Ok"))
-	})
+	m.HandleFunc("/seed", spider.seedHandler)
+	m.HandleFunc("/periodic", spider.periodicJobHandler)
 
 	spider.wg.Add(1)
 
@@ -172,6 +157,68 @@ func (spider *Spider) startWebServer() {
 	}()
 
 	log.Infof("Listening on %s", addr)
+}
+
+func (spider *Spider) seedHandler(w http.ResponseWriter, r *http.Request) {
+	URL := r.URL.Query().Get("url")
+
+	if URL == "" {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Missing url"))
+		return
+	}
+
+	err := spider.startSeedCollector(URL)
+
+	if err != nil {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Ok"))
+}
+
+func (spider *Spider) periodicJobHandler(w http.ResponseWriter, r *http.Request) {
+	URL := r.URL.Query().Get("url")
+
+	if URL == "" {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Missing url"))
+		return
+	}
+
+	_, err := url.ParseRequestURI(URL)
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Invalid url"))
+		return
+	}
+
+	interval := r.URL.Query().Get("interval")
+
+	if interval == "" {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Missing interval"))
+		return
+	}
+
+	integerInterval, err := strconv.Atoi(interval)
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Invalid interval"))
+		return
+	}
+
+	durationInterval := time.Duration(integerInterval) * time.Second
+	go spider.startPeriodicCollector(URL, durationInterval)
+
+	response := fmt.Sprintf("Added periodic job for %s with interval of %d seconds", URL, integerInterval)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(response))
 }
 
 func (spider *Spider) getCollector() (*colly.Collector, error) {
@@ -386,5 +433,30 @@ func (spider *Spider) startSeedCollector(url string) error {
 		return nil
 	default:
 		return errors.New("Maximum number of seed collectors running, try later")
+	}
+}
+
+func (spider *Spider) startPeriodicCollector(url string, interval time.Duration) {
+	spider.wg.Add(1)
+	defer spider.wg.Done()
+
+	ticker := time.NewTicker(interval)
+
+	for {
+		select {
+		case <-spider.done:
+			return
+		case <-ticker.C:
+			c, err := spider.getSeedCollector()
+			if err != nil {
+				spider.Logger.Error(err)
+				break
+			}
+			c.Visit(url)
+			spider.Logger.Infof("Periodic collector on %s started", url)
+			c.Wait()
+			spider.Logger.Infof("Periodic collector on %s ended", url)
+
+		}
 	}
 }
