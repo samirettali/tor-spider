@@ -27,10 +27,12 @@ type ElasticPageStorage struct {
 	pages chan PageInfo
 	done  chan struct{}
 	wg    sync.WaitGroup
+
+	client *elasticsearch.Client
 }
 
 // NewElasticPageStorage returns a new ElasticPageStorage
-func NewElasticPageStorage(uri string, index string, bufferSize int) *ElasticPageStorage {
+func NewElasticPageStorage(uri string, index string, bufferSize int) (*ElasticPageStorage, error) {
 	e := &ElasticPageStorage{
 		URI:        uri,
 		Index:      index,
@@ -38,7 +40,13 @@ func NewElasticPageStorage(uri string, index string, bufferSize int) *ElasticPag
 	}
 	e.pages = make(chan PageInfo, e.BufferSize)
 	e.done = make(chan struct{})
-	return e
+	err := e.initClient()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return e, nil
 }
 
 // Start does nothing in this case
@@ -63,15 +71,9 @@ func (e *ElasticPageStorage) SavePage(page PageInfo) {
 }
 
 func (e *ElasticPageStorage) getBulkIndexer() (esutil.BulkIndexer, error) {
-	client, err := e.getClient()
-
-	if err != nil {
-		return nil, err
-	}
-
 	bi, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
 		Index:         e.Index,
-		Client:        client,
+		Client:        e.client,
 		NumWorkers:    8,
 		FlushBytes:    int(1000000),
 		FlushInterval: 30 * time.Second,
@@ -165,10 +167,6 @@ func (e *ElasticPageStorage) Status() string {
 }
 
 func (e *ElasticPageStorage) count() (int, error) {
-	client, err := e.getClient()
-	if err != nil {
-		return 0, err
-	}
 	type countResponse struct {
 		Count  int `json:"count"`
 		Shards struct {
@@ -183,7 +181,7 @@ func (e *ElasticPageStorage) count() (int, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
 	defer cancel()
-	resp, err := countRequest.Do(ctx, client.Transport)
+	resp, err := countRequest.Do(ctx, e.client.Transport)
 	if err != nil {
 		return 0, err
 	}
@@ -196,7 +194,7 @@ func (e *ElasticPageStorage) count() (int, error) {
 	return result.Count, nil
 }
 
-func (e *ElasticPageStorage) getClient() (*elasticsearch.Client, error) {
+func (e *ElasticPageStorage) initClient() error {
 	var err error
 	retryBackoff := backoff.NewExponentialBackOff()
 	client, err := elasticsearch.NewClient(elasticsearch.Config{
@@ -217,12 +215,14 @@ func (e *ElasticPageStorage) getClient() (*elasticsearch.Client, error) {
 	})
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	_, err = client.Info()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return client, nil
+
+	e.client = client
+	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
 // TODO make it return two channels, one for input and one for output
@@ -28,21 +29,42 @@ type MongoJobsStorage struct {
 	filling chan struct{}
 	wg      *sync.WaitGroup
 	min     int
+
+	client *mongo.Client
 }
 
 // NewMongoJobsStorage returns an instance
-func NewMongoJobsStorage(URI string, dbName string, colName string, bufSize int, min int) *MongoJobsStorage {
+func NewMongoJobsStorage(URI string, dbName string, colName string, bufSize int, min int) (*MongoJobsStorage, error) {
 	s := &MongoJobsStorage{
 		URI:            URI,
 		DatabaseName:   dbName,
 		CollectionName: colName,
 		jobs:           make(chan Job, bufSize),
 	}
+
 	s.done = make(chan struct{})
 	s.filling = make(chan struct{}, 1)
 	s.min = min
 	s.wg = &sync.WaitGroup{}
-	return s
+
+	var err error
+	var client *mongo.Client
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
+
+	if client, err = mongo.Connect(ctx, options.Client().ApplyURI(s.URI)); err != nil {
+		return nil, err
+	}
+
+	err = client.Ping(ctx, readpref.Primary())
+
+	if err != nil {
+		return nil, err
+	}
+
+	s.client = client
+	return s, nil
 }
 
 // Start checks one time at a second if there are enough jobs in the channel, and if there are not it fetches them from the database
@@ -68,8 +90,16 @@ func (s *MongoJobsStorage) Stop() error {
 	// TODO close jobs channel?
 	close(s.done)
 	s.wg.Wait()
-	_, err := s.flush(cap(s.jobs))
-	return err
+
+	if _, err := s.flush(cap(s.jobs)); err != nil {
+		return err
+	}
+
+	if err := s.client.Disconnect(context.Background()); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Status returns the status
@@ -125,32 +155,8 @@ func (s *MongoJobsStorage) SaveJob(job Job) {
 	}
 }
 
-func (s *MongoJobsStorage) getCollectionClient() (*mongo.Collection, error) {
-	var client *mongo.Client
-	var err error
-
-	if client, err = mongo.NewClient(options.Client().ApplyURI(s.URI)); err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
-	defer cancel()
-	if err = client.Connect(ctx); err != nil {
-		return nil, err
-	}
-
-	db := client.Database(s.DatabaseName)
-	return db.Collection(s.CollectionName), nil
-}
-
 func (s *MongoJobsStorage) deleteJobsFromDb(jobs []string) (int64, error) {
-	var col *mongo.Collection
-	var err error
-
-	if col, err = s.getCollectionClient(); err != nil {
-		return 0, err
-	}
-	defer col.Database().Client().Disconnect(context.Background())
+	col := s.client.Database(s.DatabaseName).Collection(s.CollectionName)
 
 	filter := bson.M{"url": bson.M{"$in": jobs}}
 
@@ -220,13 +226,7 @@ func (s *MongoJobsStorage) fillJobsChannel() {
 }
 
 func (s *MongoJobsStorage) getCursor() (*mongo.Cursor, error) {
-	var col *mongo.Collection
-	var err error
-	if col, err = s.getCollectionClient(); err != nil {
-		return nil, err
-	}
-
-	defer col.Database().Client().Disconnect(context.Background())
+	col := s.client.Database(s.DatabaseName).Collection(s.CollectionName)
 
 	findOptions := options.Find()
 	findOptions.SetLimit(int64(s.min))
@@ -259,15 +259,13 @@ loop:
 		return 0, nil
 	}
 
+	col := s.client.Database(s.DatabaseName).Collection(s.CollectionName)
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
 	defer cancel()
-	col, err := s.getCollectionClient()
-	if err != nil {
-		// TODO save jobs
-		return 0, err
-	}
-	defer col.Database().Client().Disconnect(context.Background())
+
 	result, err := col.InsertMany(ctx, jobs)
+
 	if err != nil {
 		return 0, err
 	}
@@ -279,17 +277,16 @@ loop:
 }
 
 func (s *MongoJobsStorage) countJobsInDb() (int64, error) {
-	col, err := s.getCollectionClient()
+	col := s.client.Database(s.DatabaseName).Collection(s.CollectionName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
+
+	count, err := col.CountDocuments(ctx, bson.D{})
+
 	if err != nil {
 		return 0, err
 	}
 
-	defer col.Database().Client().Disconnect(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
-	defer cancel()
-	count, err := col.CountDocuments(ctx, bson.D{})
-	if err != nil {
-		return 0, err
-	}
 	return count, nil
 }

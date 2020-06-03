@@ -18,13 +18,13 @@ import (
 )
 
 type config struct {
-	RedisURI          string `envconfig:"REDIS_URI"`
-	ElasticURI        string `envconfig:"ELASTIC_URI"`
-	ElasticIndex      string `envconfig:"ELASTIC_INDEX"`
-	ProxyURI          string `envconfig:"PROXY_URI"`
-	MongoURI          string `envconfig:"MONGO_URI"`
-	MongoDB           string `envconfig:"MONGO_DB"`
-	MongoCol          string `envconfig:"MONGO_COL"`
+	RedisURI          string `envconfig:"REDIS_URI" required:"true"`
+	ElasticURI        string `envconfig:"ELASTIC_URI" required:"true"`
+	ElasticIndex      string `envconfig:"ELASTIC_INDEX" required:"true"`
+	ProxyURI          string `envconfig:"PROXY_URI" required:"true"`
+	MongoURI          string `envconfig:"MONGO_URI" required:"true"`
+	MongoDB           string `envconfig:"MONGO_DB" required:"true"`
+	MongoCol          string `envconfig:"MONGO_COL" required:"true"`
 	LogLevel          string `envconfig:"LOG_LEVEL" default:"error"`
 	BlacklistFile     string `envconfig:"BLACKLIST_FILE" required:"false"`
 	Depth             int    `envconfig:"DEPTH" default:"2"`
@@ -97,10 +97,20 @@ func main() {
 
 	registry := serviceregistry.NewServiceRegistry()
 
-	elasticPageStorage := spider.NewElasticPageStorage(config.ElasticURI, config.ElasticIndex, 100)
+	elasticPageStorage, err := spider.NewElasticPageStorage(config.ElasticURI, config.ElasticIndex, 100)
+
+	if err != nil {
+		logger.Fatal(err)
+	}
+
 	elasticPageStorage.Logger = logger
 
-	mongoJobsStorage := spider.NewMongoJobsStorage(config.MongoURI, config.MongoDB, config.MongoCol, 1000, config.Workers)
+	mongoJobsStorage, err := spider.NewMongoJobsStorage(config.MongoURI, config.MongoDB, config.MongoCol, 1000, config.Workers)
+
+	if err != nil {
+		logger.Fatal(err)
+	}
+
 	mongoJobsStorage.Logger = logger
 
 	if err := registry.RegisterService(elasticPageStorage); err != nil {
