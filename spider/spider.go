@@ -60,30 +60,33 @@ type Spider struct {
 
 	wg                    *sync.WaitGroup
 	sem                   chan struct{}
-	runningCollectors     chan struct{}
+	runningTorCollectors  chan struct{}
 	runningSeedCollectors chan struct{}
 	done                  chan struct{}
-	torCollector          *colly.Collector
+	onionCollector        *colly.Collector
+	seedCollector         *colly.Collector
 }
 
 // Init initialized all the struct values
 func (spider *Spider) Init() error {
 	spider.sem = make(chan struct{}, spider.NumWorkers)
-	spider.runningCollectors = make(chan struct{}, spider.NumWorkers)
+	spider.runningTorCollectors = make(chan struct{}, spider.NumWorkers)
 	spider.runningSeedCollectors = make(chan struct{}, spider.NumWorkers)
 	spider.done = make(chan struct{})
 	spider.wg = &sync.WaitGroup{}
 
-	err := spider.initCollector()
+	err := spider.initTorCollector()
 
 	if err != nil {
 		return err
 	}
 
+	spider.initSeedCollector()
+
 	return nil
 }
 
-func (spider *Spider) initCollector() error {
+func (spider *Spider) initTorCollector() error {
 	disallowed := make([]*regexp.Regexp, len(spider.Blacklist))
 
 	for index, b := range spider.Blacklist {
@@ -114,8 +117,6 @@ func (spider *Spider) initCollector() error {
 		Proxy: http.ProxyURL(spider.ProxyURL),
 		DialContext: (&net.Dialer{
 			Timeout: 30 * time.Second,
-			// KeepAlive: 30 * time.Second,
-			DualStack: true,
 		}).DialContext,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       30 * time.Second,
@@ -133,9 +134,41 @@ func (spider *Spider) initCollector() error {
 		return err
 	}
 
-	spider.torCollector = c
+	spider.onionCollector = c
 
 	return nil
+}
+
+func (spider *Spider) initSeedCollector() {
+	c := colly.NewCollector(
+		colly.MaxDepth(spider.Depth),
+		colly.Async(true),
+		colly.IgnoreRobotsTxt(),
+	)
+
+	c.MaxBodySize = 1000 * 1000
+
+	extensions.RandomUserAgent(c)
+	extensions.Referer(c)
+
+	c.WithTransport(&http.Transport{
+		Proxy: http.ProxyURL(spider.ProxyURL),
+		DialContext: (&net.Dialer{
+			Timeout: 60 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableKeepAlives:     true,
+	})
+
+	c.Limit(&colly.LimitRule{
+		DomainGlob:  "*",
+		Parallelism: spider.Parallelism,
+	})
+
+	spider.seedCollector = c
 }
 
 func (spider *Spider) startWebServer() {
@@ -221,8 +254,8 @@ func (spider *Spider) periodicJobHandler(w http.ResponseWriter, r *http.Request)
 	w.Write([]byte(response))
 }
 
-func (spider *Spider) getCollector() (*colly.Collector, error) {
-	c := spider.torCollector.Clone()
+func (spider *Spider) getOnionCollector() (*colly.Collector, error) {
+	c := spider.onionCollector.Clone()
 
 	// Get all the links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
@@ -272,35 +305,7 @@ func (spider *Spider) getCollector() (*colly.Collector, error) {
 }
 
 func (spider *Spider) getSeedCollector() (*colly.Collector, error) {
-	c := colly.NewCollector(
-		colly.MaxDepth(2),
-		colly.Async(true),
-		colly.IgnoreRobotsTxt(),
-	)
-
-	c.MaxBodySize = 1000 * 1000
-
-	extensions.RandomUserAgent(c)
-	extensions.Referer(c)
-
-	c.WithTransport(&http.Transport{
-		Proxy: http.ProxyURL(spider.ProxyURL),
-		DialContext: (&net.Dialer{
-			Timeout: 30 * time.Second,
-			// KeepAlive: 30 * time.Second,
-			DualStack: true,
-		}).DialContext,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   30 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		DisableKeepAlives:     true,
-	})
-
-	c.Limit(&colly.LimitRule{
-		DomainGlob:  "*",
-		Parallelism: spider.Parallelism,
-	})
+	c := spider.seedCollector.Clone()
 
 	// Get all the links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
@@ -343,9 +348,7 @@ func (spider *Spider) Start() {
 // Stop signals to all goroutines to stop and waits for them to stop
 func (spider *Spider) Stop() error {
 	close(spider.done)
-	spider.Logger.Infof("Spider is stopping")
 	spider.wg.Wait()
-	spider.Logger.Info("All goroutines ended, flushing data")
 	return nil
 }
 
@@ -361,7 +364,7 @@ func (spider *Spider) Status() string {
 		fmt.Fprint(&b, "Running. ")
 	}
 
-	fmt.Fprintf(&b, "%dx%d collectors running and %dx%d seed collectors running", len(spider.runningCollectors), spider.Parallelism, len(spider.runningSeedCollectors),
+	fmt.Fprintf(&b, "%dx%d collectors running and %dx%d seed collectors running", len(spider.runningTorCollectors), spider.Parallelism, len(spider.runningSeedCollectors),
 		spider.Parallelism)
 
 	return b.String()
@@ -380,7 +383,7 @@ func (spider *Spider) startCollector() {
 		<-spider.sem
 	}()
 
-	c, err := spider.getCollector()
+	c, err := spider.getOnionCollector()
 
 	if err != nil {
 		spider.Logger.Error(err)
@@ -396,7 +399,7 @@ func (spider *Spider) startCollector() {
 		case <-ticker.C:
 			job, err := spider.JS.GetJob()
 			if err == nil {
-				spider.runningCollectors <- struct{}{}
+				spider.runningTorCollectors <- struct{}{}
 				err := c.Visit(job.URL)
 				if err != nil {
 					spider.Logger.Debugf("Collector %d error: %s", c.ID, err.Error())
@@ -407,7 +410,7 @@ func (spider *Spider) startCollector() {
 				if err == nil {
 					spider.Logger.Debugf("Collector %d ended on %s", c.ID, job.URL)
 				}
-				<-spider.runningCollectors
+				<-spider.runningTorCollectors
 			}
 		}
 	}
