@@ -47,54 +47,55 @@ type JobsStorage interface {
 
 // Spider is a struct that represents a Spider
 type Spider struct {
-	NumWorkers  int
-	Parallelism int
-	Depth       int
-	Blacklist   []string
-	ProxyURL    *url.URL
-	Logger      *log.Logger
+	Blacklist []string
+	Logger    *log.Logger
+	JS        JobsStorage
+	PS        PageStorage
 
-	Storage storage.Storage
-	JS      JobsStorage
-	PS      PageStorage
-
-	wg                    *sync.WaitGroup
-	sem                   chan struct{}
-	runningTorCollectors  chan struct{}
-	runningSeedCollectors chan struct{}
-	done                  chan struct{}
-	onionCollector        *colly.Collector
-	seedCollector         *colly.Collector
+	numWorkers     int
+	parallelism    int
+	depth          int
+	proxyURL       *url.URL
+	wg             *sync.WaitGroup
+	sem            chan struct{}
+	onionSem       chan struct{}
+	seedSem        chan struct{}
+	done           chan struct{}
+	onionCollector *colly.Collector
+	seedCollector  *colly.Collector
 }
 
-// Init initialized all the struct values
-func (spider *Spider) Init() error {
-	spider.sem = make(chan struct{}, spider.NumWorkers)
-	spider.runningTorCollectors = make(chan struct{}, spider.NumWorkers)
-	spider.runningSeedCollectors = make(chan struct{}, spider.NumWorkers)
-	spider.done = make(chan struct{})
-	spider.wg = &sync.WaitGroup{}
-
-	err := spider.initTorCollector()
-
-	if err != nil {
-		return err
+// NewSpider returns a pointer to a spider
+func NewSpider(numWorkers int, parallelism int, depth int, proxyURL *url.URL, visitedStorage storage.Storage) (*Spider, error) {
+	s := &Spider{
+		parallelism: parallelism,
+		sem:         make(chan struct{}, numWorkers),
+		onionSem:    make(chan struct{}, numWorkers),
+		seedSem:     make(chan struct{}, numWorkers),
+		done:        make(chan struct{}),
+		wg:          &sync.WaitGroup{},
 	}
 
-	spider.initSeedCollector()
+	err := s.initTorCollector(visitedStorage)
 
-	return nil
+	if err != nil {
+		return nil, err
+	}
+
+	s.initSeedCollector()
+
+	return s, nil
 }
 
-func (spider *Spider) initTorCollector() error {
-	disallowed := make([]*regexp.Regexp, len(spider.Blacklist))
+func (s *Spider) initTorCollector(visitedStorage storage.Storage) error {
+	disallowed := make([]*regexp.Regexp, len(s.Blacklist))
 
-	for index, b := range spider.Blacklist {
+	for index, b := range s.Blacklist {
 		disallowed[index] = regexp.MustCompile(b)
 	}
 
 	c := colly.NewCollector(
-		colly.MaxDepth(spider.Depth),
+		colly.MaxDepth(s.depth),
 		colly.Async(true),
 		colly.IgnoreRobotsTxt(),
 		colly.DisallowedURLFilters(
@@ -114,7 +115,7 @@ func (spider *Spider) initTorCollector() error {
 	extensions.Referer(c)
 
 	c.WithTransport(&http.Transport{
-		Proxy: http.ProxyURL(spider.ProxyURL),
+		Proxy: http.ProxyURL(s.proxyURL),
 		DialContext: (&net.Dialer{
 			Timeout: 30 * time.Second,
 		}).DialContext,
@@ -127,21 +128,21 @@ func (spider *Spider) initTorCollector() error {
 
 	c.Limit(&colly.LimitRule{
 		DomainGlob:  "*",
-		Parallelism: spider.Parallelism,
+		Parallelism: s.parallelism,
 	})
 
-	if err := c.SetStorage(spider.Storage); err != nil {
+	if err := c.SetStorage(visitedStorage); err != nil {
 		return err
 	}
 
-	spider.onionCollector = c
+	s.onionCollector = c
 
 	return nil
 }
 
-func (spider *Spider) initSeedCollector() {
+func (s *Spider) initSeedCollector() {
 	c := colly.NewCollector(
-		colly.MaxDepth(spider.Depth),
+		colly.MaxDepth(s.depth),
 		colly.Async(true),
 		colly.IgnoreRobotsTxt(),
 	)
@@ -152,7 +153,7 @@ func (spider *Spider) initSeedCollector() {
 	extensions.Referer(c)
 
 	c.WithTransport(&http.Transport{
-		Proxy: http.ProxyURL(spider.ProxyURL),
+		Proxy: http.ProxyURL(s.proxyURL),
 		DialContext: (&net.Dialer{
 			Timeout: 60 * time.Second,
 		}).DialContext,
@@ -165,34 +166,34 @@ func (spider *Spider) initSeedCollector() {
 
 	c.Limit(&colly.LimitRule{
 		DomainGlob:  "*",
-		Parallelism: spider.Parallelism,
+		Parallelism: s.parallelism,
 	})
 
-	spider.seedCollector = c
+	s.seedCollector = c
 }
 
-func (spider *Spider) startWebServer() {
+func (s *Spider) startWebServer() {
 	addr := ":8080"
-	m := http.NewServeMux()
-	s := http.Server{Addr: addr, Handler: m}
+	mux := http.NewServeMux()
+	server := http.Server{Addr: addr, Handler: mux}
 
-	m.HandleFunc("/seed", spider.seedHandler)
-	m.HandleFunc("/periodic", spider.periodicJobHandler)
+	mux.HandleFunc("/seed", s.seedHandler)
+	mux.HandleFunc("/periodic", s.periodicJobHandler)
 
-	spider.wg.Add(1)
+	s.wg.Add(1)
 
-	go s.ListenAndServe()
+	go server.ListenAndServe()
 
 	go func() {
-		<-spider.done
-		s.Shutdown(context.Background())
-		spider.wg.Done()
+		<-s.done
+		server.Shutdown(context.Background())
+		s.wg.Done()
 	}()
 
 	log.Infof("Listening on %s", addr)
 }
 
-func (spider *Spider) seedHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Spider) seedHandler(w http.ResponseWriter, r *http.Request) {
 	URL := r.URL.Query().Get("url")
 
 	if URL == "" {
@@ -201,7 +202,7 @@ func (spider *Spider) seedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := spider.startSeedCollector(URL)
+	err := s.startSeedCollector(URL)
 
 	if err != nil {
 		w.WriteHeader(http.StatusOK)
@@ -213,7 +214,7 @@ func (spider *Spider) seedHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Ok"))
 }
 
-func (spider *Spider) periodicJobHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Spider) periodicJobHandler(w http.ResponseWriter, r *http.Request) {
 	URL := r.URL.Query().Get("url")
 
 	if URL == "" {
@@ -247,21 +248,21 @@ func (spider *Spider) periodicJobHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	durationInterval := time.Duration(integerInterval) * time.Second
-	go spider.startPeriodicCollector(URL, durationInterval)
+	go s.startPeriodicCollector(URL, durationInterval)
 
 	response := fmt.Sprintf("Added periodic job for %s with interval of %d seconds", URL, integerInterval)
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(response))
 }
 
-func (spider *Spider) getOnionCollector() (*colly.Collector, error) {
-	c := spider.onionCollector.Clone()
+func (s *Spider) getOnionCollector() (*colly.Collector, error) {
+	c := s.onionCollector.Clone()
 
 	// Get all the links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		foundURL := e.Request.AbsoluteURL(e.Attr("href"))
-		if foundURL != "" && e.Request.Depth == spider.Depth && isOnion(foundURL) {
-			spider.JS.SaveJob(Job{foundURL})
+		if foundURL != "" && e.Request.Depth == s.depth && isOnion(foundURL) {
+			s.JS.SaveJob(Job{foundURL})
 		} else {
 			e.Request.Visit(foundURL)
 		}
@@ -275,7 +276,7 @@ func (spider *Spider) getOnionCollector() (*colly.Collector, error) {
 		dom, err := goquery.NewDocumentFromReader(bodyReader)
 
 		if err != nil {
-			spider.Logger.Error(err)
+			s.Logger.Error(err)
 		} else {
 			title = dom.Find("title").Contents().Text()
 		}
@@ -287,85 +288,85 @@ func (spider *Spider) getOnionCollector() (*colly.Collector, error) {
 			Title:  title,
 		}
 
-		spider.PS.SavePage(result)
+		s.PS.SavePage(result)
 	})
 
 	// Debug responses
 	c.OnResponse(func(r *colly.Response) {
-		spider.Logger.Debugf("Got %d for %s", r.StatusCode,
+		s.Logger.Debugf("Got %d for %s", r.StatusCode,
 			r.Request.URL)
 	})
 
 	// Debug errors
 	c.OnError(func(r *colly.Response, err error) {
-		spider.Logger.Debugf("Error while visiting %s: %v", r.Request.URL, err)
+		s.Logger.Debugf("Error while visiting %s: %v", r.Request.URL, err)
 	})
 
 	return c, nil
 }
 
-func (spider *Spider) getSeedCollector() (*colly.Collector, error) {
-	c := spider.seedCollector.Clone()
+func (s *Spider) getSeedCollector() (*colly.Collector, error) {
+	c := s.seedCollector.Clone()
 
 	// Get all the links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		foundURL := e.Request.AbsoluteURL(e.Attr("href"))
 		if isOnion(foundURL) {
-			spider.JS.SaveJob(Job{foundURL})
+			s.JS.SaveJob(Job{foundURL})
 		}
 		e.Request.Visit(foundURL)
 	})
 
 	// Debug responses
 	c.OnResponse(func(r *colly.Response) {
-		spider.Logger.Debugf("SeedCollector got %d for %s", r.StatusCode,
+		s.Logger.Debugf("SeedCollector got %d for %s", r.StatusCode,
 			r.Request.URL)
 	})
 
 	// Debug errors
 	c.OnError(func(r *colly.Response, err error) {
-		spider.Logger.Debugf("SeedCollector: %s", err)
+		s.Logger.Debugf("SeedCollector: %s", err)
 	})
 
 	return c, nil
 }
 
 // Start starts the crawlers and logs messages
-func (spider *Spider) Start() {
-	spider.startWebServer()
+func (s *Spider) Start() {
+	s.startWebServer()
 	// TODO add wg here as it's a goroutine
 	for {
 		select {
-		case spider.sem <- struct{}{}:
-			go spider.startCollector()
-		case <-spider.done:
-			spider.wg.Wait()
+		case s.sem <- struct{}{}:
+			go s.startCollector()
+		case <-s.done:
+			s.wg.Wait()
 			return
 		}
 	}
 }
 
 // Stop signals to all goroutines to stop and waits for them to stop
-func (spider *Spider) Stop() error {
-	close(spider.done)
-	spider.wg.Wait()
+func (s *Spider) Stop() error {
+	close(s.done)
+	s.wg.Wait()
 	return nil
 }
 
 // Status returns how many collector are running
-func (spider *Spider) Status() string {
+func (s *Spider) Status() string {
 	var b strings.Builder
 	b.Grow(40)
 
 	select {
-	case <-spider.done:
+	case <-s.done:
 		fmt.Fprint(&b, "Stopped. ")
 	default:
 		fmt.Fprint(&b, "Running. ")
 	}
 
-	fmt.Fprintf(&b, "%dx%d collectors running and %dx%d seed collectors running", len(spider.runningTorCollectors), spider.Parallelism, len(spider.runningSeedCollectors),
-		spider.Parallelism)
+	fmt.Fprintf(&b, "%dx%d collectors running and %dx%d seed collectors running", len(s.onionSem), s.parallelism, len(s.seedSem),
+		s.parallelism)
 
 	return b.String()
 }
@@ -375,18 +376,18 @@ func isOnion(url string) bool {
 	return err == nil && u.TLD == "onion"
 }
 
-func (spider *Spider) startCollector() {
-	spider.wg.Add(1)
+func (s *Spider) startCollector() {
+	s.wg.Add(1)
 
 	defer func() {
-		spider.wg.Done()
-		<-spider.sem
+		s.wg.Done()
+		<-s.sem
 	}()
 
-	c, err := spider.getOnionCollector()
+	c, err := s.getOnionCollector()
 
 	if err != nil {
-		spider.Logger.Error(err)
+		s.Logger.Error(err)
 		return
 	}
 
@@ -394,44 +395,44 @@ func (spider *Spider) startCollector() {
 
 	for {
 		select {
-		case <-spider.done:
+		case <-s.done:
 			return
 		case <-ticker.C:
-			job, err := spider.JS.GetJob()
+			job, err := s.JS.GetJob()
 			if err == nil {
-				spider.runningTorCollectors <- struct{}{}
+				s.onionSem <- struct{}{}
 				err := c.Visit(job.URL)
 				if err != nil {
-					spider.Logger.Debugf("Collector %d error: %s", c.ID, err.Error())
+					s.Logger.Debugf("Collector %d error: %s", c.ID, err.Error())
 				} else {
-					spider.Logger.Debugf("Collector %d started on %s", c.ID, job.URL)
+					s.Logger.Debugf("Collector %d started on %s", c.ID, job.URL)
 				}
 				c.Wait()
 				if err == nil {
-					spider.Logger.Debugf("Collector %d ended on %s", c.ID, job.URL)
+					s.Logger.Debugf("Collector %d ended on %s", c.ID, job.URL)
 				}
-				<-spider.runningTorCollectors
+				<-s.onionSem
 			}
 		}
 	}
 }
 
-func (spider *Spider) startSeedCollector(url string) error {
+func (s *Spider) startSeedCollector(url string) error {
 	select {
-	case spider.runningSeedCollectors <- struct{}{}:
+	case s.seedSem <- struct{}{}:
 		go func() {
-			spider.wg.Add(1)
-			c, err := spider.getSeedCollector()
+			s.wg.Add(1)
+			c, err := s.getSeedCollector()
 			if err != nil {
-				spider.Logger.Error(err)
+				s.Logger.Error(err)
 				return
 			}
 			c.Visit(url)
-			spider.Logger.Infof("Seed collector started on %s", url)
+			s.Logger.Infof("Seed collector started on %s", url)
 			c.Wait()
-			spider.Logger.Infof("Seed collector on %s ended", url)
-			spider.wg.Done()
-			<-spider.runningSeedCollectors
+			s.Logger.Infof("Seed collector on %s ended", url)
+			s.wg.Done()
+			<-s.seedSem
 		}()
 		return nil
 	default:
@@ -439,27 +440,26 @@ func (spider *Spider) startSeedCollector(url string) error {
 	}
 }
 
-func (spider *Spider) startPeriodicCollector(url string, interval time.Duration) {
-	spider.wg.Add(1)
-	defer spider.wg.Done()
+func (s *Spider) startPeriodicCollector(url string, interval time.Duration) {
+	s.wg.Add(1)
+	defer s.wg.Done()
 
 	ticker := time.NewTicker(interval)
 
 	for {
 		select {
-		case <-spider.done:
+		case <-s.done:
 			return
 		case <-ticker.C:
-			c, err := spider.getSeedCollector()
+			c, err := s.getSeedCollector()
 			if err != nil {
-				spider.Logger.Error(err)
+				s.Logger.Error(err)
 				break
 			}
 			c.Visit(url)
-			spider.Logger.Infof("Periodic collector on %s started", url)
+			s.Logger.Infof("Periodic collector on %s started", url)
 			c.Wait()
-			spider.Logger.Infof("Periodic collector on %s ended", url)
-
+			s.Logger.Infof("Periodic collector on %s ended", url)
 		}
 	}
 }
