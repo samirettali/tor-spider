@@ -222,6 +222,8 @@ func (s *MongoJobsStorage) fillJobsChannel() {
 		}
 
 		s.Logger.Debugf("Got %d jobs, deleted %d jobs", len(jobs), deletedCount)
+	default:
+		s.Logger.Debugf("Filler already running")
 	}
 }
 
@@ -289,4 +291,9 @@ func (s *MongoJobsStorage) countJobsInDb() (int64, error) {
 	}
 
 	return count, nil
+}
+
+// GetJobsChannel returns the channel holding the jobs
+func (s *MongoJobsStorage) GetJobsChannel() chan Job {
+	return s.jobs
 }

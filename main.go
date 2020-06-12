@@ -133,20 +133,15 @@ func main() {
 		logger.Fatal(err)
 	}
 
-	spider := &spider.Spider{
-		Storage:     visitedStorage,
-		JS:          js,
-		PS:          ps,
-		ProxyURL:    proxyURL,
-		NumWorkers:  config.Workers,
-		Parallelism: config.Parallelism,
-		Depth:       config.Depth,
-		Logger:      logger,
+	spider, err := spider.NewSpider(config.Workers, config.Parallelism, config.Depth, proxyURL, visitedStorage)
+
+	if err != nil {
+		logger.Fatal(err)
 	}
 
-	if err := spider.Init(); err != nil {
-		log.Fatalf("Spider ended with %v", err)
-	}
+	spider.JS = js
+	spider.PS = ps
+	spider.Logger = logger
 
 	if config.BlacklistFile != "" {
 		blacklist, err := readLines(config.BlacklistFile)
