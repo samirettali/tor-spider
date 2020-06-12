@@ -28,4 +28,4 @@
     able to crawl clearnet and subreddits
 - [x] Merge getCollector function and use a flag to get an onion one or a normal
     one
-- [ ] Make some periodic collectors for places where links gets published
+- [x] Make some periodic collectors for places where links gets published
