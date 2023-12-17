@@ -34,6 +34,18 @@ type PageInfo struct {
 	Status int
 }
 
+// SpiderConfig is a struct that holds the spider configuration.
+type SpiderConfig struct {
+	NumWorkers     int             `split_words:"true"`
+	Parallelism    int             `split_words:"true"`
+	Depth          int             `split_words:"true"`
+	Blacklist      []string        `split_words:"true"`
+	ProxyURL       string          `split_words:"true"`
+	VisitedStorage storage.Storage `split_words:"true"`
+	PageStorage    PageStorage     `split_words:"true"`
+	JobsStorage    JobsStorage     `split_words:"true"`
+}
+
 // PageStorage is an interface which handles tha storage of the visited pages
 type PageStorage interface {
 	SavePage(PageInfo)
@@ -48,13 +60,11 @@ type JobsStorage interface {
 
 // Spider is a struct that represents a Spider
 type Spider struct {
-	Blacklist []string
-	Logger    *log.Logger
-	JS        JobsStorage
-	PS        PageStorage
+	Logger      *log.Logger
+	jobsStorage JobsStorage
+	pageStorage PageStorage
+	blacklist   []string
 
-	parallelism    int
-	depth          int
 	proxyURL       *url.URL
 	wg             *sync.WaitGroup
 	sem            chan struct{}
@@ -66,34 +76,38 @@ type Spider struct {
 }
 
 // NewSpider returns a pointer to a spider
-func NewSpider(numWorkers int, parallelism int, depth int, proxyURL *url.URL, visitedStorage storage.Storage) (*Spider, error) {
+func NewSpider(config *SpiderConfig) (*Spider, error) {
 	s := &Spider{
-		parallelism: parallelism,
-		sem:         make(chan struct{}, numWorkers),
-		onionSem:    make(chan struct{}, numWorkers),
-		seedSem:     make(chan struct{}, numWorkers),
+		blacklist:   config.Blacklist,
+		sem:         make(chan struct{}, config.NumWorkers),
+		onionSem:    make(chan struct{}, config.NumWorkers),
+		seedSem:     make(chan struct{}, config.NumWorkers),
 		done:        make(chan struct{}),
 		wg:          &sync.WaitGroup{},
+		pageStorage: config.PageStorage,
+		jobsStorage: config.JobsStorage,
 	}
 
-	if err := s.initTorCollector(visitedStorage); err != nil {
+	if err := s.initTorCollector(config); err != nil {
 		return nil, err
 	}
 
-	s.initSeedCollector()
+	if err := s.initSeedCollector(config); err != nil {
+		return nil, err
+	}
 
 	return s, nil
 }
 
-func (s *Spider) initTorCollector(visitedStorage storage.Storage) error {
-	disallowed := make([]*regexp.Regexp, len(s.Blacklist))
+func (s *Spider) initTorCollector(config *SpiderConfig) error {
+	disallowed := make([]*regexp.Regexp, len(config.Blacklist))
 
-	for index, b := range s.Blacklist {
+	for index, b := range config.Blacklist {
 		disallowed[index] = regexp.MustCompile(b)
 	}
 
 	c := colly.NewCollector(
-		colly.MaxDepth(s.depth),
+		colly.MaxDepth(config.Depth),
 		colly.Async(true),
 		colly.IgnoreRobotsTxt(),
 		colly.DisallowedURLFilters(
@@ -107,29 +121,36 @@ func (s *Spider) initTorCollector(visitedStorage storage.Storage) error {
 		),
 	)
 
-	c.MaxBodySize = 1000 * 1000
+	// c.MaxBodySize = 1000 * 1000
 
 	extensions.RandomUserAgent(c)
 	extensions.Referer(c)
 
+	proxyURL, err := url.Parse(config.ProxyURL)
+
+	if err != nil {
+		return err
+	}
+
 	c.WithTransport(&http.Transport{
-		Proxy: http.ProxyURL(s.proxyURL),
+		Proxy: http.ProxyURL(proxyURL),
 		DialContext: (&net.Dialer{
-			Timeout: 30 * time.Second,
+			Timeout:   30 * time.Second,
+			DualStack: true,
 		}).DialContext,
 		MaxIdleConns:          100,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   30 * time.Second,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   60 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableKeepAlives:     true,
 	})
 
 	c.Limit(&colly.LimitRule{
 		DomainGlob:  "*",
-		Parallelism: s.parallelism,
+		Parallelism: config.Parallelism,
 	})
 
-	if err := c.SetStorage(visitedStorage); err != nil {
+	if err := c.SetStorage(config.VisitedStorage); err != nil {
 		return err
 	}
 
@@ -138,36 +159,46 @@ func (s *Spider) initTorCollector(visitedStorage storage.Storage) error {
 	return nil
 }
 
-func (s *Spider) initSeedCollector() {
+func (s *Spider) initSeedCollector(config *SpiderConfig) error {
 	c := colly.NewCollector(
-		colly.MaxDepth(s.depth),
+		colly.MaxDepth(config.Depth),
 		colly.Async(true),
 		colly.IgnoreRobotsTxt(),
+		colly.AllowURLRevisit(),
 	)
 
-	c.MaxBodySize = 1000 * 1000
+	// c.MaxBodySize = 1000 * 1000
 
 	extensions.RandomUserAgent(c)
 	extensions.Referer(c)
 
+	proxyURL, err := url.Parse(config.ProxyURL)
+
+	if err != nil {
+		return err
+	}
+
 	c.WithTransport(&http.Transport{
-		Proxy: http.ProxyURL(s.proxyURL),
+		Proxy: http.ProxyURL(proxyURL),
 		DialContext: (&net.Dialer{
-			Timeout: 60 * time.Second,
+			Timeout:   60 * time.Second,
+			DualStack: true,
 		}).DialContext,
 		MaxIdleConns:          100,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   30 * time.Second,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   60 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableKeepAlives:     true,
 	})
 
 	c.Limit(&colly.LimitRule{
 		DomainGlob:  "*",
-		Parallelism: s.parallelism,
+		Parallelism: config.Parallelism,
 	})
 
 	s.seedCollector = c
+
+	return nil
 }
 
 func (s *Spider) startWebServer() {
@@ -179,11 +210,19 @@ func (s *Spider) startWebServer() {
 	mux.HandleFunc("/seed", s.seedHandler)
 	mux.HandleFunc("/periodic", s.periodicJobHandler)
 
-	go server.ListenAndServe()
+	go func() {
+		err := server.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.Logger.Error(err)
+		}
+	}()
 
 	go func() {
 		<-s.done
-		server.Shutdown(context.Background())
+		tc, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		server.Shutdown(tc)
+		s.Logger.Debug("HTTP server shutdown")
 		s.wg.Done()
 	}()
 
@@ -258,8 +297,8 @@ func (s *Spider) getOnionCollector() *colly.Collector {
 	// Get all the links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		foundURL := e.Request.AbsoluteURL(e.Attr("href"))
-		if foundURL != "" && e.Request.Depth == s.depth && isOnion(foundURL) {
-			s.JS.SaveJob(Job{foundURL})
+		if foundURL != "" && e.Request.Depth == c.MaxDepth && isOnion(foundURL) {
+			s.jobsStorage.SaveJob(Job{foundURL})
 		} else {
 			e.Request.Visit(foundURL)
 		}
@@ -285,7 +324,7 @@ func (s *Spider) getOnionCollector() *colly.Collector {
 			Title:  title,
 		}
 
-		s.PS.SavePage(result)
+		s.pageStorage.SavePage(result)
 	})
 
 	// Debug responses
@@ -309,7 +348,7 @@ func (s *Spider) getSeedCollector() *colly.Collector {
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		foundURL := e.Request.AbsoluteURL(e.Attr("href"))
 		if isOnion(foundURL) {
-			s.JS.SaveJob(Job{foundURL})
+			s.jobsStorage.SaveJob(Job{foundURL})
 		}
 		e.Request.Visit(foundURL)
 	})
@@ -364,8 +403,7 @@ func (s *Spider) Status() string {
 		fmt.Fprint(&b, "Running. ")
 	}
 
-	fmt.Fprintf(&b, "%dx%d collectors running and %dx%d seed collectors running", len(s.onionSem), s.parallelism, len(s.seedSem),
-		s.parallelism)
+	fmt.Fprintf(&b, "%d onion collectors running and %d seed collectors running", len(s.onionSem), len(s.seedSem))
 
 	return b.String()
 }
@@ -389,7 +427,7 @@ func (s *Spider) startCollector() {
 		select {
 		case <-s.done:
 			return
-		case job := <-s.JS.GetJobsChannel():
+		case job := <-s.jobsStorage.GetJobsChannel():
 			s.onionSem <- struct{}{}
 			err := c.Visit(job.URL)
 			if err != nil {

@@ -9,21 +9,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/elastic/go-elasticsearch/v8/esapi"
-
 	"github.com/cenkalti/backoff/v4"
-	"github.com/elastic/go-elasticsearch/v8"
-	"github.com/elastic/go-elasticsearch/v8/esutil"
+	"github.com/elastic/go-elasticsearch/v7"
+	"github.com/elastic/go-elasticsearch/v7/esapi"
+	"github.com/elastic/go-elasticsearch/v7/esutil"
 	log "github.com/sirupsen/logrus"
 )
 
 // ElasticPageStorage is an implementation of the PageStorage interface
 type ElasticPageStorage struct {
-	URI        string
-	Index      string
-	BufferSize int
-	Logger     *log.Logger
+	Logger *log.Logger
 
+	uri   string
+	index string
 	pages chan PageInfo
 	done  chan struct{}
 	wg    sync.WaitGroup
@@ -31,14 +29,21 @@ type ElasticPageStorage struct {
 	client *elasticsearch.Client
 }
 
+// ElasticPageConfig is a struct that holds ElasticPageStorage configuration.
+type ElasticPageConfig struct {
+	URI        string `split_words:"true"`
+	Index      string `split_words:"true"`
+	BufferSize int    `split_words:"true"`
+}
+
 // NewElasticPageStorage returns a new ElasticPageStorage
-func NewElasticPageStorage(uri string, index string, bufferSize int) (*ElasticPageStorage, error) {
+func NewElasticPageStorage(config *ElasticPageConfig) (*ElasticPageStorage, error) {
 	e := &ElasticPageStorage{
-		URI:        uri,
-		Index:      index,
-		BufferSize: bufferSize,
+		uri:   config.URI,
+		index: config.Index,
 	}
-	e.pages = make(chan PageInfo, e.BufferSize)
+
+	e.pages = make(chan PageInfo, config.BufferSize)
 	e.done = make(chan struct{})
 	err := e.initClient()
 
@@ -62,17 +67,18 @@ func (e *ElasticPageStorage) SavePage(page PageInfo) {
 	case e.pages <- page:
 		return
 	default:
-		_, err := e.flush()
-		if err != nil {
-			e.Logger.Error(err)
+		go e.flush()
+		select {
+		case e.pages <- page:
+		case <-time.After(3 * time.Second):
+			e.Logger.Error("Cannot flush pages")
 		}
-		e.pages <- page
 	}
 }
 
 func (e *ElasticPageStorage) getBulkIndexer() (esutil.BulkIndexer, error) {
 	bi, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
-		Index:         e.Index,
+		Index:         e.index,
 		Client:        e.client,
 		NumWorkers:    8,
 		FlushBytes:    int(1000000),
@@ -87,11 +93,12 @@ func (e *ElasticPageStorage) getBulkIndexer() (esutil.BulkIndexer, error) {
 }
 
 // Flush flushes the page queue
-func (e *ElasticPageStorage) flush() (uint64, error) {
+func (e *ElasticPageStorage) flush() {
 	bi, err := e.getBulkIndexer()
 
 	if err != nil {
-		return 0, err
+		e.Logger.Error(err)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
@@ -102,7 +109,8 @@ func (e *ElasticPageStorage) flush() (uint64, error) {
 			data, err := json.Marshal(page)
 
 			if err != nil {
-				return 0, err
+				e.Logger.Error(err)
+				return
 			}
 
 			err = bi.Add(
@@ -114,21 +122,23 @@ func (e *ElasticPageStorage) flush() (uint64, error) {
 			)
 
 			if err != nil {
-				return 0, err
+				e.Logger.Error(err)
+				return
 			}
 
 		default:
 			if err := bi.Close(context.Background()); err != nil {
-				return 0, err
+				e.Logger.Error(err)
+				return
 			}
 
 			biStats := bi.Stats()
 
 			if biStats.NumFailed > 0 {
-				msg := fmt.Sprintf("Failed to index %d documents", biStats.NumFailed)
-				return 0, &SavePageError{msg}
+				e.Logger.Errorf("Failed to index %d pages", biStats.NumFailed)
 			}
-			return biStats.NumAdded, nil
+
+			return
 		}
 	}
 }
@@ -137,8 +147,10 @@ func (e *ElasticPageStorage) flush() (uint64, error) {
 func (e *ElasticPageStorage) Stop() error {
 	close(e.done)
 	e.wg.Wait()
-	_, err := e.flush()
-	return err
+	// _, err := e.flush()
+	// return err
+	e.flush()
+	return nil
 }
 
 // Status return the status
@@ -177,7 +189,7 @@ func (e *ElasticPageStorage) count() (int, error) {
 		} `json:"_shards"`
 	}
 	countRequest := &esapi.CountRequest{
-		Index: []string{e.Index},
+		Index: []string{e.index},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
 	defer cancel()
@@ -199,7 +211,7 @@ func (e *ElasticPageStorage) initClient() error {
 	retryBackoff := backoff.NewExponentialBackOff()
 	client, err := elasticsearch.NewClient(elasticsearch.Config{
 		Addresses: []string{
-			e.URI,
+			e.uri,
 		},
 		// Retry on 429 TooManyRequests statuses
 		RetryOnStatus: []int{502, 503, 504, 429},

@@ -1,4 +1,4 @@
-FROM golang:alpine
+FROM golang:alpine AS build
 
 RUN apk add --no-cache git
 
@@ -17,11 +17,13 @@ COPY . .
 
 RUN go build .
 
+FROM scratch AS bin
+
 WORKDIR /dist
 
-RUN cp /build/tor-spider .
-RUN cp /build/blacklist.txt .
+COPY --from=build /build/tor-spider .
+COPY blacklist.txt .
 
 # Using a blacklist in order to prevend ending up crawling huge sites like 
 # facebook and pornhub
-CMD ./tor-spider
+CMD ["./tor-spider"]

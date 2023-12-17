@@ -4,9 +4,11 @@ services:
 
   redis:
     image: redis
+    ports:
+      - 127.0.0.1:6379:6379
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.6.1
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.8.0
     environment:
       - discovery.type=single-node
       - bootstrap.memory_lock=true
@@ -18,12 +20,12 @@ services:
     ports:
       - 127.0.0.1:9200:9200
 
-  kibana:
-    image: docker.elastic.co/kibana/kibana:7.6.1
-    ports:
-      - 127.0.0.1:5601:5601
-    depends_on:
-      - elasticsearch
+  # kibana:
+  #   image: docker.elastic.co/kibana/kibana:7.8.0
+  #   ports:
+  #     - 127.0.0.1:5601:5601
+  #   depends_on:
+  #     - elasticsearch
 
   mongo:
     image: mongo
@@ -34,27 +36,25 @@ services:
     image: zeta0/alpine-tor
     environment:
       - tors=40
-
-  spider:
-    image: tor-spider
-    depends_on:
-      - tor
-      - redis
-      - elasticsearch
-      - mongo
     ports:
-      - 127.0.0.1:8080:8080
-    environment:
-      - REDIS_URI=${REDIS_URI}
-      - ELASTIC_URI=${ELASTIC_URI}
-      - ELASTIC_INDEX=${ELASTIC_INDEX}
-      - PROXY_URI=${PROXY_URI}
-      - MONGO_URI=${MONGO_URI}
-      - MONGO_DB=${MONGO_DB}
-      - MONGO_COL=${MONGO_COL}
-      - BLACKLIST_FILE=${BLACKLIST_FILE}
-      - LOG_LEVEL=${LOG_LEVEL}
-      - WORKERS=${WORKERS}
-      - PARALLELISM=${PARALLELISM}
-      - DEPTH=${DEPTH}
-      - LOG_STATUS_INTERVAL=${LOG_STATUS_INTERVAL}
+      - 127.0.0.1:5566:5566
+
+  # tor:
+  #   image: multitor
+  #   command: bash -c "multitor --init 40 --user root --socks-port 9000 --control-port 9900 --proxy privoxy --haproxy --verbose --debug > /tmp/multitor.log && tail -f /tmp/multitor.log"
+  #   ports:
+  #     - 127.0.0.1:5566:16379
+
+#   spider:
+#     image: tor-spider
+#     depends_on:
+#       - tor
+#       - redis
+#       - elasticsearch
+#       - mongo
+#     ports:
+#       - 127.0.0.1:8080:8080
+#     volumes:
+#         - ./data:/data
+#     env_file:
+#      - .env

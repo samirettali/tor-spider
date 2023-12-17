@@ -1,7 +1,9 @@
+all: docker compose
+
 docker:
 	docker build -t tor-spider .
 
-docker-run:
+compose:
 	docker-compose up spider
 
 build:

@@ -14,8 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
-// TODO make it return two channels, one for input and one for output
-
 // MongoJobsStorage is an implementation of the JobsStorage interface
 type MongoJobsStorage struct {
 	DatabaseName   string
@@ -24,27 +22,36 @@ type MongoJobsStorage struct {
 	URI            string
 	BufferSize     int
 
-	jobs    chan Job
-	done    chan struct{}
-	filling chan struct{}
-	wg      *sync.WaitGroup
-	min     int
+	jobs        chan Job
+	done        chan struct{}
+	filling     chan struct{}
+	wg          *sync.WaitGroup
+	minimumJobs int
 
 	client *mongo.Client
 }
 
+// MongoJobsConfig is a struct that holds MongoJobsStorage configuration.
+type MongoJobsConfig struct {
+	URI         string `split_words:"true"`
+	Database    string `split_words:"true"`
+	Collection  string `split_words:"true"`
+	BufferSize  int    `split_words:"true"`
+	MinimumJobs int    `split_words:"true"`
+}
+
 // NewMongoJobsStorage returns an instance
-func NewMongoJobsStorage(URI string, dbName string, colName string, bufSize int, min int) (*MongoJobsStorage, error) {
+func NewMongoJobsStorage(config *MongoJobsConfig) (*MongoJobsStorage, error) {
 	s := &MongoJobsStorage{
-		URI:            URI,
-		DatabaseName:   dbName,
-		CollectionName: colName,
-		jobs:           make(chan Job, bufSize),
+		URI:            config.URI,
+		DatabaseName:   config.Database,
+		CollectionName: config.Collection,
+		jobs:           make(chan Job, config.BufferSize),
 	}
 
 	s.done = make(chan struct{})
 	s.filling = make(chan struct{}, 1)
-	s.min = min
+	s.minimumJobs = config.MinimumJobs
 	s.wg = &sync.WaitGroup{}
 
 	var err error
@@ -67,7 +74,8 @@ func NewMongoJobsStorage(URI string, dbName string, colName string, bufSize int,
 	return s, nil
 }
 
-// Start checks one time at a second if there are enough jobs in the channel, and if there are not it fetches them from the database
+// Start checks one time at a second if there are enough jobs in the channel,
+// and if there are not it fetches them from the database
 func (s *MongoJobsStorage) Start() {
 	s.wg.Add(1)
 	defer s.wg.Done()
@@ -77,7 +85,7 @@ func (s *MongoJobsStorage) Start() {
 		case <-s.done:
 			return
 		case <-ticker.C:
-			if len(s.jobs) < s.min {
+			if len(s.jobs) < s.minimumJobs {
 				go s.fillJobsChannel()
 			}
 		}
@@ -87,13 +95,13 @@ func (s *MongoJobsStorage) Start() {
 
 // Stop signals to the getter and the saver to stop
 func (s *MongoJobsStorage) Stop() error {
-	// TODO close jobs channel?
 	close(s.done)
 	s.wg.Wait()
 
-	if _, err := s.flush(cap(s.jobs)); err != nil {
-		return err
-	}
+	s.flush(cap(s.jobs))
+	// if _, err := s.flush(cap(s.jobs)); err != nil {
+	// 	return err
+	// }
 
 	if err := s.client.Disconnect(context.Background()); err != nil {
 		return err
@@ -144,9 +152,8 @@ func (s *MongoJobsStorage) SaveJob(job Job) {
 	case s.jobs <- job:
 		return
 	default:
-		n := len(s.jobs) - s.min
-		s.flush(n)
-		s.jobs <- job
+		n := len(s.jobs) - s.minimumJobs
+		go s.flush(n)
 		select {
 		case s.jobs <- job:
 		case <-time.After(3 * time.Second):
@@ -231,11 +238,11 @@ func (s *MongoJobsStorage) getCursor() (*mongo.Cursor, error) {
 	col := s.client.Database(s.DatabaseName).Collection(s.CollectionName)
 
 	findOptions := options.Find()
-	findOptions.SetLimit(int64(s.min))
+	findOptions.SetLimit(int64(s.minimumJobs))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
 	defer cancel()
 
-	pipeline := []bson.M{bson.M{"$sample": bson.M{"size": s.min}}}
+	pipeline := []bson.M{bson.M{"$sample": bson.M{"size": s.minimumJobs}}}
 	cur, err := col.Aggregate(ctx, pipeline)
 
 	if err != nil {
@@ -245,7 +252,9 @@ func (s *MongoJobsStorage) getCursor() (*mongo.Cursor, error) {
 	return cur, nil
 }
 
-func (s *MongoJobsStorage) flush(max int) (int, error) {
+func (s *MongoJobsStorage) flush(max int) {
+	s.wg.Add(1)
+	defer s.wg.Done()
 	jobs := make([]interface{}, 0)
 loop:
 	for i := 0; i < max; i++ {
@@ -258,7 +267,7 @@ loop:
 	}
 
 	if len(jobs) == 0 {
-		return 0, nil
+		return
 	}
 
 	col := s.client.Database(s.DatabaseName).Collection(s.CollectionName)
@@ -269,13 +278,16 @@ loop:
 	result, err := col.InsertMany(ctx, jobs)
 
 	if err != nil {
-		return 0, err
+		s.Logger.Error(err)
+		return
 	}
 	inserted := len(result.InsertedIDs)
+
 	if inserted != len(jobs) {
 		s.Logger.Errorf("%d jobs were not saved", len(jobs)-inserted)
 	}
-	return inserted, nil
+
+	return
 }
 
 func (s *MongoJobsStorage) countJobsInDb() (int64, error) {

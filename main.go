@@ -3,43 +3,25 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"net/url"
 	"os"
 	"os/signal"
+	"runtime/pprof"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/gocolly/redisstorage"
 	"github.com/kelseyhightower/envconfig"
-	"github.com/samirettali/tor-spider/serviceregistry"
+	"github.com/samirettali/serviceregistry"
 	"github.com/samirettali/tor-spider/spider"
 	log "github.com/sirupsen/logrus"
 )
 
 type config struct {
-	RedisURI          string `envconfig:"REDIS_URI" required:"true"`
-	ElasticURI        string `envconfig:"ELASTIC_URI" required:"true"`
-	ElasticIndex      string `envconfig:"ELASTIC_INDEX" required:"true"`
-	ProxyURI          string `envconfig:"PROXY_URI" required:"true"`
-	MongoURI          string `envconfig:"MONGO_URI" required:"true"`
-	MongoDB           string `envconfig:"MONGO_DB" required:"true"`
-	MongoCol          string `envconfig:"MONGO_COL" required:"true"`
-	LogLevel          string `envconfig:"LOG_LEVEL" default:"error"`
-	BlacklistFile     string `envconfig:"BLACKLIST_FILE" required:"false"`
-	Depth             int    `envconfig:"DEPTH" default:"2"`
-	Workers           int    `envconfig:"WORKERS" default:"32"`
-	Parallelism       int    `envconfig:"PARALLELISM" default:"4"`
-	LogStatusInterval int    `envconfig:"LOG_STATUS_INTERVAL" default:"3"`
-}
-
-func loadConfig() (*config, error) {
-	var cfg config
-	err := envconfig.Process("", &cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &cfg, nil
+	RedisURI          string `envconfig:"REDIS_URI" required:"true" split_words:"true"`
+	BlacklistFile     string `envconfig:"BLACKLIST_FILE" required:"false" split_words:"true"`
+	LogLevel          string `envconfig:"LOG_LEVEL" default:"error" split_words:"true"`
+	LogStatusInterval int    `envconfig:"LOG_INTERVAL" default:"3" split_words:"true"`
 }
 
 func readLines(path string) ([]string, error) {
@@ -58,46 +40,60 @@ func readLines(path string) ([]string, error) {
 }
 
 func main() {
+	f, err := os.Create("./data/tor-spider.pprof")
+	if err != nil {
+		log.Fatal(err)
+	}
+	pprof.StartCPUProfile(f)
+	defer pprof.StopCPUProfile()
+
 	logger := log.New()
+	logger.SetReportCaller(true)
 	logger.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
 	})
 
-	config, err := loadConfig()
-	if err != nil {
+	var cfg config
+	if err := envconfig.Process("", &cfg); err != nil {
 		logger.Fatal(err)
 	}
 
+	logger.Infof("%+v", cfg)
+
 	switch {
-	case config.LogLevel == "error":
+	case cfg.LogLevel == "error":
 		logger.SetLevel(log.ErrorLevel)
-	case config.LogLevel == "info":
+	case cfg.LogLevel == "info":
 		logger.SetLevel(log.InfoLevel)
-	case config.LogLevel == "debug":
+	case cfg.LogLevel == "debug":
 		logger.SetLevel(log.DebugLevel)
 	default:
-		logger.Fatalf("Invalid debug level: %s", config.LogLevel)
-	}
-
-	proxyURL, err := url.Parse(config.ProxyURI)
-	if err != nil {
-		log.Panic(err)
+		logger.Fatalf("Invalid debug level: %s", cfg.LogLevel)
 	}
 
 	visitedStorage := &redisstorage.Storage{
-		Address:  config.RedisURI,
+		Address:  cfg.RedisURI,
 		Password: "",
 		DB:       0,
 		Prefix:   "0",
 	}
 
-	defer func() {
-		visitedStorage.Client.Close()
-	}()
+	// defer func() {
+	// 	visitedStorage.Client.Close()
+	// }()
 
-	registry := serviceregistry.NewServiceRegistry()
+	registry := serviceregistry.NewServiceRegistry(logger)
 
-	elasticPageStorage, err := spider.NewElasticPageStorage(config.ElasticURI, config.ElasticIndex, 100)
+	// ElasticPageStorage configuration
+	var elasticConfig spider.ElasticPageConfig
+	err = envconfig.Process("ELASTIC_PAGE_STORAGE", &elasticConfig)
+
+	if err != nil {
+		logger.Fatal(err)
+	}
+	log.Infof("%+v\n", elasticConfig)
+
+	elasticPageStorage, err := spider.NewElasticPageStorage(&elasticConfig)
 
 	if err != nil {
 		logger.Fatal(err)
@@ -105,7 +101,20 @@ func main() {
 
 	elasticPageStorage.Logger = logger
 
-	mongoJobsStorage, err := spider.NewMongoJobsStorage(config.MongoURI, config.MongoDB, config.MongoCol, 1000, config.Workers)
+	if err := registry.RegisterService(elasticPageStorage); err != nil {
+		logger.Fatal(err)
+	}
+
+	// MongoJobsStorage configuration
+	var mongoConfig spider.MongoJobsConfig
+	err = envconfig.Process("MONGO_JOBS_STORAGE", &mongoConfig)
+
+	if err != nil {
+		logger.Fatal(err)
+	}
+	log.Infof("%+v\n", mongoConfig)
+
+	mongoJobsStorage, err := spider.NewMongoJobsStorage(&mongoConfig)
 
 	if err != nil {
 		logger.Fatal(err)
@@ -113,43 +122,48 @@ func main() {
 
 	mongoJobsStorage.Logger = logger
 
-	if err := registry.RegisterService(elasticPageStorage); err != nil {
-		logger.Fatal(err)
-	}
-
 	if err := registry.RegisterService(mongoJobsStorage); err != nil {
 		logger.Fatal(err)
 	}
 
+	// Spider configuration
 	// TODO use generic interface as it's meant to be done. For now this will
 	// do.
-	var js *spider.MongoJobsStorage
-	if err := registry.FetchService(&js); err != nil {
+	var jobsStorage *spider.MongoJobsStorage
+	if err := registry.FetchService(&jobsStorage); err != nil {
 		logger.Fatal(err)
 	}
 
-	var ps *spider.ElasticPageStorage
-	if err := registry.FetchService(&ps); err != nil {
+	var pageStorage *spider.ElasticPageStorage
+	if err := registry.FetchService(&pageStorage); err != nil {
 		logger.Fatal(err)
 	}
 
-	spider, err := spider.NewSpider(config.Workers, config.Parallelism, config.Depth, proxyURL, visitedStorage)
+	var spiderConfig spider.SpiderConfig
+	if err := envconfig.Process("SPIDER", &spiderConfig); err != nil {
+		logger.Fatal(err)
+	}
+	log.Infof("%+v", spiderConfig)
+
+	spiderConfig.JobsStorage = jobsStorage
+	spiderConfig.PageStorage = pageStorage
+	spiderConfig.VisitedStorage = visitedStorage
+
+	if cfg.BlacklistFile != "" {
+		blacklist, err := readLines(cfg.BlacklistFile)
+		if err != nil {
+			log.Fatal("Error while reading " + cfg.BlacklistFile)
+		}
+		spiderConfig.Blacklist = blacklist
+	}
+
+	spider, err := spider.NewSpider(&spiderConfig)
 
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	spider.JS = js
-	spider.PS = ps
 	spider.Logger = logger
-
-	if config.BlacklistFile != "" {
-		blacklist, err := readLines(config.BlacklistFile)
-		if err != nil {
-			log.Fatal("Error while reading " + config.BlacklistFile)
-		}
-		spider.Blacklist = blacklist
-	}
 
 	if err := registry.RegisterService(spider); err != nil {
 		logger.Fatal(err)
@@ -161,7 +175,7 @@ func main() {
 	done := make(chan struct{})
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
-	ticker := time.NewTicker(time.Second * time.Duration(config.LogStatusInterval))
+	ticker := time.NewTicker(time.Second * time.Duration(cfg.LogStatusInterval))
 
 	var wg sync.WaitGroup
 	wg.Add(1)
